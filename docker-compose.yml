@@ -6,7 +6,7 @@
 # UFW, so publishing to 0.0.0.0 here would expose the app regardless of `ufw
 # deny` — hence the explicit 127.0.0.1 binds.
 
-name: devstack
+name: paseo-dev-stack
 
 services:
   paseo:
@@ -16,8 +16,8 @@ services:
       args:
         SUPABASE_VERSION: ${SUPABASE_VERSION:-}
         EXTRA_NPM_PACKAGES: ${EXTRA_NPM_PACKAGES:-}
-    image: devstack/paseo-agents:latest
-    container_name: devstack-paseo
+    image: paseo-dev-stack/agents:latest
+    container_name: paseo-dev-stack-paseo
     restart: unless-stopped
     ports:
       - "127.0.0.1:${PASEO_PORT:-6767}:6767"
@@ -54,11 +54,11 @@ services:
       - seccomp:unconfined   # lets headless Chromium sandbox properly
     depends_on:
       - 9router
-    networks: [devstack]
+    networks: [pds]
 
   9router:
     image: decolua/9router:latest
-    container_name: devstack-9router
+    container_name: paseo-dev-stack-9router
     restart: unless-stopped
     ports:
       - "127.0.0.1:${NINEROUTER_PORT:-20128}:20128"
@@ -69,13 +69,13 @@ services:
       HOSTNAME: 0.0.0.0
     volumes:
       - ninerouter-data:/app/data
-    networks: [devstack]
+    networks: [pds]
 
   # Cloudflare tunnel — remotely-managed (token) mode.
   # Enabled only when TUNNEL_TOKEN is set:  docker compose --profile tunnel up -d
   cloudflared:
     image: cloudflare/cloudflared:latest
-    container_name: devstack-tunnel
+    container_name: paseo-dev-stack-tunnel
     restart: unless-stopped
     profiles: [tunnel]
     # NOTE: uses :- not :? — compose interpolates every service's variables even
@@ -83,24 +83,24 @@ services:
     # unset. An empty token fails fast in this container only.
     command: tunnel --no-autoupdate run --token ${TUNNEL_TOKEN:-}
     depends_on: [paseo]
-    networks: [devstack]
+    networks: [pds]
 
   # Quick tunnel — no Cloudflare account. Random *.trycloudflare.com URL,
   # NO authentication in front of it. Dev only; read the URL from the logs:
   #   docker compose logs cloudflared-quick | grep trycloudflare
   cloudflared-quick:
     image: cloudflare/cloudflared:latest
-    container_name: devstack-tunnel-quick
+    container_name: paseo-dev-stack-tunnel-quick
     restart: unless-stopped
     profiles: [quick-tunnel]
     command: tunnel --no-autoupdate --url http://paseo:6767
     depends_on: [paseo]
-    networks: [devstack]
+    networks: [pds]
 
 volumes:
   paseo-home:
   ninerouter-data:
 
 networks:
-  devstack:
+  pds:
     driver: bridge

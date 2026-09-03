@@ -13,7 +13,7 @@ set -euo pipefail
 
 DEVSTACK_USER="${DEVSTACK_USER:-paseo}"
 DEVSTACK_REPO="${DEVSTACK_REPO:-}"
-DEVSTACK_DIR="/home/${DEVSTACK_USER}/devstack"
+DEVSTACK_DIR="/home/${DEVSTACK_USER}/paseo-dev-stack"
 SWAP_GB="${SWAP_GB:-4}"
 
 log()  { printf '\033[1;36m[bootstrap]\033[0m %s\n' "$*"; }
@@ -183,7 +183,7 @@ cat <<BANNER
 
   Next:
      ssh ${DEVSTACK_USER}@<this-host>
-     cd ~/devstack && \$EDITOR .env      # set PASEO_PASSWORD
+     cd ~/paseo-dev-stack && \$EDITOR .env      # set PASEO_PASSWORD
      make up
 
   Note: group membership (docker) applies on your NEXT login.

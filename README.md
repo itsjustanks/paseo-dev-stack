@@ -4,18 +4,63 @@ One repo that stands up a complete AI coding environment — on a fresh cloud
 server, in a CI/CD pipeline, or on your Mac — with a single command.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/OWNER/devstack/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/itsjustanks/paseo-dev-stack/main/install.sh | sudo bash
 ```
 
 That creates the service user, installs Docker, adds swap, configures the
 firewall, builds the image, and starts everything. Then:
 
 ```bash
-cd ~/devstack
+cd ~/paseo-dev-stack
 make auth-all      # log in to each agent CLI
 make doctor        # verify every component
 make quick-tunnel  # get a public URL
 ```
+
+## Prerequisites
+
+| | Needed | Notes |
+|---|---|---|
+| **Cloud server** | Ubuntu/Debian, 4GB+ RAM, 20GB+ disk | The installer adds everything else. 8GB+ if you run dev servers — a single Next dev server uses 6-11GB while compiling. |
+| **Existing host** | Docker Engine 24+ and the compose **plugin** | `docker compose version` must work. `docker-compose` (the old standalone binary) is not enough. |
+| **macOS** | Docker Desktop, OrbStack, or Colima | Colima needs `brew install docker-compose` separately; Desktop and OrbStack bundle it. |
+| **All** | git, ~10GB free for the image | The build pulls Chrome (~150MB) and several toolchains. |
+| **Optional** | Cloudflare account | Only for a *named* tunnel. `make quick-tunnel` needs no account. |
+
+Nothing else is required up front. Agent logins happen after the stack is up,
+interactively, via `make auth-all`.
+
+## Install by device
+
+**Fresh Ubuntu/Debian server (recommended):**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/itsjustanks/paseo-dev-stack/main/install.sh | sudo bash
+```
+
+**DigitalOcean / Hetzner / any cloud — paste into "User data" at creation:**
+
+```bash
+#!/bin/bash
+curl -fsSL https://raw.githubusercontent.com/itsjustanks/paseo-dev-stack/main/install.sh | bash
+```
+
+**macOS (Docker Desktop / OrbStack / Colima):**
+
+```bash
+git clone https://github.com/itsjustanks/paseo-dev-stack
+cd paseo-dev-stack && ./install.sh          # no sudo; skips user/firewall/swap setup
+```
+
+**Already-provisioned host or CI/CD runner:**
+
+```bash
+git clone https://github.com/itsjustanks/paseo-dev-stack && cd paseo-dev-stack
+cp .env.example .env && $EDITOR .env        # set PASEO_PASSWORD
+make up
+```
+
+**Windows:** use WSL2 and follow the Ubuntu instructions inside it.
 
 ## Install targets
 
@@ -23,24 +68,24 @@ make quick-tunnel  # get a public URL
 
 ```bash
 #!/bin/bash
-curl -fsSL https://raw.githubusercontent.com/OWNER/devstack/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/itsjustanks/paseo-dev-stack/main/install.sh | bash
 ```
 
 The droplet comes up with the whole stack running. Generated passwords are left
-in `/root/devstack-credentials.txt`, and a `devstack.service` systemd unit
+in `/root/paseo-dev-stack-credentials.txt`, and a `devstack.service` systemd unit
 brings it back after a reboot. Pre-seed anything you like:
 
 ```bash
 #!/bin/bash
 export PASEO_PASSWORD='...' TUNNEL_TOKEN='eyJ...' PASEO_HOSTNAMES='paseo.you.com'
-curl -fsSL https://raw.githubusercontent.com/OWNER/devstack/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/itsjustanks/paseo-dev-stack/main/install.sh | bash
 ```
 
 **Existing server / CI-CD pipeline** (elest.io, Coolify, a runner — anything with
 Docker):
 
 ```bash
-git clone https://github.com/OWNER/devstack && cd devstack
+git clone https://github.com/itsjustanks/paseo-dev-stack && cd paseo-dev-stack
 sudo ./install.sh                 # full host setup
 # or, if the host is already prepared:
 cp .env.example .env && $EDITOR .env && make up
@@ -49,7 +94,7 @@ cp .env.example .env && $EDITOR .env && make up
 **macOS** (Docker Desktop, OrbStack, or Colima):
 
 ```bash
-git clone https://github.com/OWNER/devstack && cd devstack
+git clone https://github.com/itsjustanks/paseo-dev-stack && cd paseo-dev-stack
 ./install.sh                      # no sudo, no user/firewall changes
 ```
 
@@ -68,6 +113,7 @@ The installer detects the OS and skips privileged host setup on a Mac.
 | **9router Paseo plugin** | Accounts, quotas and models in the Paseo sidebar |
 | **Agent CLIs** | Claude Code · Codex · Kimi Code · Cursor Agent |
 | **Dev tools** | Supabase CLI · gh · git · Node 22 · Python 3 + uv · ripgrep · jq |
+| **Memory guards** | Reaps runaway Next dev servers and trims the caches that feed them |
 
 ## Repo layout
 
@@ -89,6 +135,10 @@ scripts/
   bootstrap-server.sh     host prep: user, docker, swap, firewall
   doctor.sh               verifies every component; exits non-zero on failure
   sync-memory.sh          memory push/pull between repo and container
+  guard/
+    devserver-guard.py    reaps ballooned/stale/orphaned Next dev servers
+    cache-trim.py         trims .next/dev and stale .turbo caches
+    install-guards.sh     installs both as systemd timers
 install.sh                thin entrypoint: detects OS, delegates to the above
 Makefile                  the command surface (make up / doctor / tunnel ...)
 ```
@@ -212,6 +262,47 @@ and the entrypoint registers it on first boot (into `~/.paseo`, which is on the
 volume — so it cannot be done at build time). It adds a **9Router** sidebar
 panel: setup checklist, per-account quota bars, parked-account recovery, and the
 model list. Pin a version with `--build-arg PLUGIN_9ROUTER_REF=v1.2.3`.
+
+## Memory guards
+
+A Next dev server's memory is **native** — Turbopack is Rust, so it lives
+outside the V8 heap and `NODE_OPTIONS=--max-old-space-size` cannot bound it. One
+was measured at 21GB. Worse, `next dev` supervises `next-server` and restarts it
+when it dies, so a ballooning server becomes an infinite grow → get killed →
+respawn loop. Killing the child alone never works; the parent must go first.
+
+Three layers handle this:
+
+| Layer | What it does |
+|---|---|
+| `PASEO_MEM_LIMIT` | cgroup ceiling on the whole container — the only *hard* cap |
+| `devserver-guard` | every 60s, reaps dev servers that balloon (>12GB), go stale (>2h), get orphaned, or pile up under real memory pressure |
+| `cache-trim` | daily, removes `.next/dev` and stale `.turbo/cache` — also a memory fix, since Turbopack memory-maps that cache at startup |
+
+```bash
+make guards          # install the systemd timers (Linux host)
+make guards-status   # timers + recent reaps
+make guards-dry      # preview what they WOULD do, changing nothing
+make mem             # host, container, and dev-server memory right now
+```
+
+The guard is deliberately conservative:
+
+- It **never** touches Paseo, 9router, an agent CLI, or a VS Code tunnel —
+  matched on the **parent chain**, not just the process's own command line.
+  (9router's dashboard is itself a Next app, so a naive matcher reaps the live
+  model router every 60s and every routed agent loses its connection.)
+- The 12GB cap is not arbitrary: a first compile legitimately uses 6-11GB, so
+  a 6GB cap kills it mid-compile and surfaces as "next-server keeps crashing".
+  Age is what actually catches leaks — a leak stays big, a compile only spikes.
+- Count-based reaping only fires under **real pressure**; two idle servers are
+  harmless.
+- A failed process scan **aborts the pass** rather than guessing. Collapsing
+  "no match" and "scan failed" into one empty list is how a watchdog
+  half-kills a live process tree.
+
+On macOS these run as launchd agents outside this repo; `make guards-dry` and
+`make mem` still work there.
 
 ## Troubleshooting
 

@@ -6,10 +6,10 @@
 #
 #   REMOTE (cloud-init user-data — paste into "User data" at droplet creation):
 #     #!/bin/bash
-#     curl -fsSL https://raw.githubusercontent.com/OWNER/devstack/main/install.sh | bash
+#     curl -fsSL https://raw.githubusercontent.com/itsjustanks/paseo-dev-stack/main/install.sh | bash
 #
 #   REMOTE (existing server):
-#     curl -fsSL https://raw.githubusercontent.com/OWNER/devstack/main/install.sh | sudo bash
+#     curl -fsSL https://raw.githubusercontent.com/itsjustanks/paseo-dev-stack/main/install.sh | sudo bash
 #
 #   LOCAL (from a clone, incl. macOS with Docker Desktop/Colima/OrbStack):
 #     ./install.sh
@@ -26,7 +26,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
-DEVSTACK_REPO="${DEVSTACK_REPO:-https://github.com/itsjustanks/devstack}"
+DEVSTACK_REPO="${DEVSTACK_REPO:-https://github.com/itsjustanks/paseo-dev-stack}"
 DEVSTACK_REF="${DEVSTACK_REF:-main}"
 DEVSTACK_USER="${DEVSTACK_USER:-paseo}"
 
@@ -49,7 +49,7 @@ if [ "$OS" = "Darwin" ]; then
   if [ -f "./docker-compose.yml" ] && [ -d "./docker/paseo" ]; then
     TARGET="$(pwd)"; log "using this clone: $TARGET"
   else
-    TARGET="${DEVSTACK_DIR:-$PWD/devstack}"
+    TARGET="${DEVSTACK_DIR:-$PWD/paseo-dev-stack}"
     if [ -d "$TARGET/.git" ]; then
       log "updating $TARGET"; git -C "$TARGET" pull --ff-only || warn "pull failed; using existing checkout"
     else
@@ -100,8 +100,8 @@ log "installing git"
 apt-get update -qq
 apt-get install -y -qq --no-install-recommends git ca-certificates curl >/dev/null
 
-DEVSTACK_DIR="${DEVSTACK_DIR:-/home/${DEVSTACK_USER}/devstack}"
-STAGE=/opt/devstack-src
+DEVSTACK_DIR="${DEVSTACK_DIR:-/home/${DEVSTACK_USER}/paseo-dev-stack}"
+STAGE=/opt/paseo-dev-stack-src
 if [ -f "$(dirname "$0")/docker-compose.yml" ]; then
   STAGE="$(cd "$(dirname "$0")" && pwd)"; log "installing from local checkout: $STAGE"
 else
@@ -136,16 +136,16 @@ if [ ! -f .env ]; then
   [ -n "${TUNNEL_TOKEN:-}" ]    && sudo -u "$DEVSTACK_USER" sed -i "s|^TUNNEL_TOKEN=.*|TUNNEL_TOKEN=${TUNNEL_TOKEN}|" .env
   # Credentials are also written where a human can find them after a headless
   # cloud-init run, since the console output is long gone by then.
-  printf 'PASEO_PASSWORD=%s\nNINEROUTER_PASSWORD=%s\n' "$pw" "$rpw" > /root/devstack-credentials.txt
-  chmod 600 /root/devstack-credentials.txt
-  log "credentials written to /root/devstack-credentials.txt"
+  printf 'PASEO_PASSWORD=%s\nNINEROUTER_PASSWORD=%s\n' "$pw" "$rpw" > /root/paseo-dev-stack-credentials.txt
+  chmod 600 /root/paseo-dev-stack-credentials.txt
+  log "credentials written to /root/paseo-dev-stack-credentials.txt"
 fi
 
 # ─── systemd unit: survive reboots ──────────────────────────────────────────
 if command -v systemctl >/dev/null 2>&1; then
-  cat > /etc/systemd/system/devstack.service <<UNIT
+  cat > /etc/systemd/system/paseo-dev-stack.service <<UNIT
 [Unit]
-Description=devstack (Paseo + 9router)
+Description=paseo-dev-stack (Paseo + 9router)
 Requires=docker.service
 After=docker.service network-online.target
 
@@ -162,12 +162,12 @@ TimeoutStartSec=1800
 WantedBy=multi-user.target
 UNIT
   systemctl daemon-reload
-  systemctl enable devstack.service >/dev/null 2>&1 || true
-  log "systemd unit installed (devstack.service)"
+  systemctl enable paseo-dev-stack.service >/dev/null 2>&1 || true
+  log "systemd unit installed (paseo-dev-stack.service)"
 fi
 
 if [ "${DEVSTACK_NO_START:-0}" = "1" ]; then
-  log "install only (DEVSTACK_NO_START=1). Start with: systemctl start devstack"
+  log "install only (DEVSTACK_NO_START=1). Start with: systemctl start paseo-dev-stack"
   exit 0
 fi
 
@@ -176,11 +176,11 @@ sudo -u "$DEVSTACK_USER" -H docker compose up -d --build
 
 echo
 cat <<BANNER
-  ✅ devstack is up
+  ✅ paseo-dev-stack is up
 
      Paseo   : http://127.0.0.1:$(grep -E '^PASEO_PORT=' .env | cut -d= -f2 || echo 6767)   (bound to localhost by design)
      9router : http://127.0.0.1:$(grep -E '^NINEROUTER_PORT=' .env | cut -d= -f2 || echo 20128)
-     creds   : /root/devstack-credentials.txt
+     creds   : /root/paseo-dev-stack-credentials.txt
 
   Reach it from your laptop (no public port is open):
      ssh -N -L 6767:127.0.0.1:6767 ${DEVSTACK_USER}@<this-host>
