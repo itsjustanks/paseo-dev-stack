@@ -37,17 +37,45 @@ apt-get install -y -qq --no-install-recommends \
 # uid 1000 must match the container's `paseo` user, or bind-mounted files are
 # unreadable inside the container. Ubuntu cloud images often pre-claim 1000
 # for the `ubuntu` user, so handle the collision explicitly.
+# uid 1000 must match the container's `paseo` user or bind-mounted files under
+# /workspace are unreadable inside the container. Ubuntu cloud images ship an
+# `ubuntu` user already holding 1000, so we may have to move it out of the way.
+# DEVSTACK_TAKE_UID1000=0 opts out and accepts the mismatch.
+claim_uid_1000() {
+  local holder; holder="$(getent passwd 1000 | cut -d: -f1)"
+  [ -n "$holder" ] || return 0
+  if [ "${DEVSTACK_TAKE_UID1000:-1}" != "1" ]; then
+    warn "uid 1000 held by '$holder'; not reassigning (DEVSTACK_TAKE_UID1000=0)"
+    return 1
+  fi
+  # Never displace a logged-in user or one with running processes.
+  if pgrep -u 1000 >/dev/null 2>&1; then
+    warn "uid 1000 ('$holder') has running processes; leaving it alone"
+    return 1
+  fi
+  local newuid=1100
+  while getent passwd "$newuid" >/dev/null; do newuid=$((newuid+1)); done
+  log "moving existing user '$holder' from uid 1000 to $newuid to free it"
+  usermod  -u "$newuid" "$holder" || { warn "usermod failed"; return 1; }
+  getent group 1000 >/dev/null && groupmod -g "$newuid" "$(getent group 1000 | cut -d: -f1)" 2>/dev/null || true
+  # usermod retargets the home dir but not files elsewhere.
+  find /home/"$holder" -xdev -uid 1000 -exec chown -h "$newuid" {} + 2>/dev/null || true
+  return 0
+}
+
 if id -u "$DEVSTACK_USER" >/dev/null 2>&1; then
-  log "user $DEVSTACK_USER exists (uid $(id -u "$DEVSTACK_USER"))"
+  cur_uid="$(id -u "$DEVSTACK_USER")"
+  log "user $DEVSTACK_USER exists (uid $cur_uid)"
+  [ "$cur_uid" != "1000" ] && warn "uid is $cur_uid, not 1000 — /workspace files will show a different owner inside the container"
 else
+  if getent passwd 1000 >/dev/null; then claim_uid_1000 || true; fi
   if getent passwd 1000 >/dev/null; then
-    existing="$(getent passwd 1000 | cut -d: -f1)"
-    warn "uid 1000 already taken by '$existing'; creating $DEVSTACK_USER with an auto uid"
-    warn "  -> bind-mounted files will be owned by $existing inside the container"
+    warn "uid 1000 still taken; creating $DEVSTACK_USER with an auto uid"
     useradd -m -s /bin/bash "$DEVSTACK_USER"
+    warn "  -> bind-mounted /workspace files will not line up with the container user"
   else
     log "creating $DEVSTACK_USER with uid/gid 1000 (matches container)"
-    groupadd -g 1000 "$DEVSTACK_USER"
+    getent group 1000 >/dev/null || groupadd -g 1000 "$DEVSTACK_USER"
     useradd -m -u 1000 -g 1000 -s /bin/bash "$DEVSTACK_USER"
   fi
 fi

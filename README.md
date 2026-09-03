@@ -1,15 +1,59 @@
 # devstack
 
-One repo that stands up a complete AI coding environment — on a fresh server or
-on your laptop — with a single command.
+One repo that stands up a complete AI coding environment — on a fresh cloud
+server, in a CI/CD pipeline, or on your Mac — with a single command.
 
 ```bash
-sudo ./scripts/bootstrap-server.sh     # fresh server: user, docker, swap, firewall
-cp .env.example .env && $EDITOR .env   # set PASEO_PASSWORD
-make up                                # build + start everything
-make auth-all                          # log in to each agent CLI
-make doctor                            # verify
+curl -fsSL https://raw.githubusercontent.com/OWNER/devstack/main/install.sh | sudo bash
 ```
+
+That creates the service user, installs Docker, adds swap, configures the
+firewall, builds the image, and starts everything. Then:
+
+```bash
+cd ~/devstack
+make auth-all      # log in to each agent CLI
+make doctor        # verify every component
+make quick-tunnel  # get a public URL
+```
+
+## Install targets
+
+**DigitalOcean / any cloud — paste into "User data" at droplet creation:**
+
+```bash
+#!/bin/bash
+curl -fsSL https://raw.githubusercontent.com/OWNER/devstack/main/install.sh | bash
+```
+
+The droplet comes up with the whole stack running. Generated passwords are left
+in `/root/devstack-credentials.txt`, and a `devstack.service` systemd unit
+brings it back after a reboot. Pre-seed anything you like:
+
+```bash
+#!/bin/bash
+export PASEO_PASSWORD='...' TUNNEL_TOKEN='eyJ...' PASEO_HOSTNAMES='paseo.you.com'
+curl -fsSL https://raw.githubusercontent.com/OWNER/devstack/main/install.sh | bash
+```
+
+**Existing server / CI-CD pipeline** (elest.io, Coolify, a runner — anything with
+Docker):
+
+```bash
+git clone https://github.com/OWNER/devstack && cd devstack
+sudo ./install.sh                 # full host setup
+# or, if the host is already prepared:
+cp .env.example .env && $EDITOR .env && make up
+```
+
+**macOS** (Docker Desktop, OrbStack, or Colima):
+
+```bash
+git clone https://github.com/OWNER/devstack && cd devstack
+./install.sh                      # no sudo, no user/firewall changes
+```
+
+The installer detects the OS and skips privileged host setup on a Mac.
 
 ## What you get
 
@@ -20,6 +64,8 @@ make doctor                            # verify
 | **Cloudflare Tunnel** | Public HTTPS with **no inbound firewall hole** — named or throwaway |
 | **agent-browser** | Headless Chromium for agents, Chrome baked into the image |
 | **Auto-memory** | Claude Code's persistent memory, seeded from `./memory/` and kept on a volume |
+| **VS Code dev tunnels** | `code tunnel` → edit the box from vscode.dev in a browser |
+| **9router Paseo plugin** | Accounts, quotas and models in the Paseo sidebar |
 | **Agent CLIs** | Claude Code · Codex · Kimi Code · Cursor Agent |
 | **Dev tools** | Supabase CLI · gh · git · Node 22 · Python 3 + uv · ripgrep · jq |
 
@@ -27,8 +73,10 @@ make doctor                            # verify
 
 **Agents can't run as root.** Claude Code and Codex refuse elevated/bypass
 permission modes as root, so both the host bootstrap and the container run
-everything as an unprivileged `paseo` user (uid 1000 on both sides, so
-bind-mounted files line up).
+everything as an unprivileged `paseo` user — uid 1000 on both sides, so
+bind-mounted files line up. Ubuntu cloud images ship an `ubuntu` user already
+holding uid 1000; the bootstrap moves it aside (only when it has no running
+processes) so `paseo` can claim it. Opt out with `DEVSTACK_TAKE_UID1000=0`.
 
 **The `/home/paseo` volume masks build-time installs.** The Paseo base image
 declares `VOLUME /home/paseo`, and every agent installer writes into `$HOME`.
@@ -112,8 +160,31 @@ make root                     root shell (apt installs)
 make logs S=paseo             tail one service
 make doctor                   verify every component
 make browser-test             smoke-test headless Chromium
+make code-tunnel              VS Code dev tunnel -> vscode.dev
+make quick-tunnel             public URL, no account needed
 make nuke                     delete everything incl. credentials
 ```
+
+### VS Code dev tunnels
+
+Edit the server from a browser, with no inbound port and no VPN:
+
+```bash
+make code-tunnel        # device login, then prints a vscode.dev/tunnel/... URL
+make code-tunnel-bg     # same, backgrounded
+make code-tunnel-url    # print the URL again
+```
+
+The tunnel is Microsoft's own; the container dials out to it. Your code at
+`/workspace` and every agent CLI are available in that browser IDE.
+
+### 9router Paseo plugin
+
+The image vendors [paseo-plugin-9router](https://github.com/itsjustanks/paseo-plugin-9router)
+and the entrypoint registers it on first boot (into `~/.paseo`, which is on the
+volume — so it cannot be done at build time). It adds a **9Router** sidebar
+panel: setup checklist, per-account quota bars, parked-account recovery, and the
+model list. Pin a version with `--build-arg PLUGIN_9ROUTER_REF=v1.2.3`.
 
 ## Troubleshooting
 
