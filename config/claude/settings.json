@@ -1,0 +1,30 @@
+{
+  "$comment": "Seeded into /home/paseo/.claude/settings.json on FIRST BOOT ONLY. Edit inside the container afterwards; the entrypoint never overwrites an existing file.",
+  "autoMemoryDirectory": "/home/paseo/.claude/memory",
+  "includeCoAuthoredBy": false,
+  "outputStyle": "Concise",
+  "effortLevel": "high",
+  "hasCompletedOnboarding": true,
+  "permissions": {
+    "allow": [
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(grep:*)",
+      "Bash(rg:*)",
+      "Bash(find:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(wc:*)",
+      "Bash(agent-browser:*)",
+      "Bash(supabase:*)",
+      "Bash(uv:*)",
+      "Bash(npm run:*)",
+      "WebSearch"
+    ]
+  }
+}

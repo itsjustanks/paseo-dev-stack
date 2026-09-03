@@ -1,0 +1,94 @@
+# devstack — Paseo + 9router + Cloudflare tunnel + agent CLIs.
+#
+# Security model: NOTHING is published to 0.0.0.0. Both app ports bind to
+# 127.0.0.1 on the host, and the only public entrance is the Cloudflare tunnel
+# (which dials OUT — no inbound firewall hole). Docker's iptables rules bypass
+# UFW, so publishing to 0.0.0.0 here would expose the app regardless of `ufw
+# deny` — hence the explicit 127.0.0.1 binds.
+
+name: devstack
+
+services:
+  paseo:
+    build:
+      context: .
+      dockerfile: docker/paseo/Dockerfile
+      args:
+        SUPABASE_VERSION: ${SUPABASE_VERSION:-2.66.4}
+        EXTRA_NPM_PACKAGES: ${EXTRA_NPM_PACKAGES:-}
+    image: devstack/paseo-agents:latest
+    container_name: devstack-paseo
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${PASEO_PORT:-6767}:6767"
+    environment:
+      PASEO_PASSWORD: ${PASEO_PASSWORD:?PASEO_PASSWORD is required - copy .env.example to .env}
+      PASEO_HOSTNAMES: ${PASEO_HOSTNAMES:-}
+      # 9router: reached by service name on the internal network.
+      NINEROUTER_URL: ${NINEROUTER_URL:-}
+      NINEROUTER_KEY: ${NINEROUTER_KEY:-}
+      # Agent CLI credentials (optional; blank = interactive login instead)
+      GH_TOKEN: ${GH_TOKEN:-}
+      SUPABASE_ACCESS_TOKEN: ${SUPABASE_ACCESS_TOKEN:-}
+      CURSOR_API_KEY: ${CURSOR_API_KEY:-}
+    volumes:
+      # Daemon state, agent configs, ALL credentials, auto-memory.
+      - paseo-home:/home/paseo
+      # Your code. Bind mount so it's editable from the host too.
+      - ${WORKSPACE_DIR:-./workspace}:/workspace
+      # Seed config copied in on first boot only (never overwrites).
+      - ./config:/opt/devstack-seed:ro
+      - ./memory:/opt/devstack-seed/memory:ro
+    # Chromium in a container dies on the default 64MB /dev/shm.
+    shm_size: 1gb
+    security_opt:
+      - seccomp:unconfined   # lets headless Chromium sandbox properly
+    depends_on:
+      - 9router
+    networks: [devstack]
+
+  9router:
+    image: decolua/9router:latest
+    container_name: devstack-9router
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${NINEROUTER_PORT:-20128}:20128"
+    environment:
+      DATA_DIR: /app/data
+      PORT: "20128"
+      # Must be 0.0.0.0, not 127.0.0.1, or sibling containers cannot reach it.
+      HOSTNAME: 0.0.0.0
+    volumes:
+      - ninerouter-data:/app/data
+    networks: [devstack]
+
+  # Cloudflare tunnel — remotely-managed (token) mode.
+  # Enabled only when TUNNEL_TOKEN is set:  docker compose --profile tunnel up -d
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: devstack-tunnel
+    restart: unless-stopped
+    profiles: [tunnel]
+    command: tunnel --no-autoupdate run --token ${TUNNEL_TOKEN:?set TUNNEL_TOKEN in .env or use the quick profile}
+    depends_on: [paseo]
+    networks: [devstack]
+
+  # Quick tunnel — no Cloudflare account. Random *.trycloudflare.com URL,
+  # NO authentication in front of it. Dev only; read the URL from the logs:
+  #   docker compose logs cloudflared-quick | grep trycloudflare
+  cloudflared-quick:
+    image: cloudflare/cloudflared:latest
+    container_name: devstack-tunnel-quick
+    restart: unless-stopped
+    profiles: [quick-tunnel]
+    command: tunnel --no-autoupdate --url http://paseo:6767
+    depends_on: [paseo]
+    networks: [devstack]
+
+volumes:
+  paseo-home:
+  ninerouter-data:
+
+networks:
+  devstack:
+    driver: bridge

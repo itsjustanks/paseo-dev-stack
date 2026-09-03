@@ -1,0 +1,13 @@
+# Seeded to /home/paseo/.codex/config.toml on FIRST BOOT ONLY.
+# Uncomment the 9router block once you have minted a key in the dashboard.
+#
+# 9router speaks the OpenAI "responses" wire API at /v1, and Codex reads the
+# key from an ENV VAR named by env_key (it does not accept an inline secret).
+#
+# model_provider = "9router"
+#
+# [model_providers.9router]
+# name     = "9router"
+# base_url = "http://9router:20128/v1"
+# env_key  = "NINEROUTER_KEY"
+# wire_api = "responses"
