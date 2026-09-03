@@ -60,9 +60,11 @@ RUN set -eux; \
     ver="${SUPABASE_VERSION}"; \
     if [ -z "$ver" ]; then \
       ver="$(curl -fsSL https://api.github.com/repos/supabase/cli/releases/latest \
-             | grep -m1 '"tag_name"' | sed -E 's/.*"v?([^"]+)".*/\1/')"; \
+             | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' \
+             | head -1 | sed -E 's/.*"v?([^"]+)"$/\1/')"; \
     fi; \
-    [ -n "$ver" ] || { echo "could not resolve supabase version"; exit 1; }; \
+    echo "$ver" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' \
+      || { echo "bad supabase version: '$ver'"; exit 1; }; \
     curl -fsSL -o /tmp/supabase.deb \
       "https://github.com/supabase/cli/releases/download/v${ver}/supabase_${ver}_linux_${arch}.deb"; \
     dpkg -i /tmp/supabase.deb; rm -f /tmp/supabase.deb; \
