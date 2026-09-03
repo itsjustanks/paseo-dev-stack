@@ -28,8 +28,10 @@ log "host: ${PRETTY_NAME:-unknown} ($(uname -m))"
 log "installing base packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
+# `make` matters: the documented UX is `make up` / `make doctor`, and a minimal
+# cloud image does not ship it.
 apt-get install -y -qq --no-install-recommends \
-  ca-certificates curl gnupg git jq ufw unattended-upgrades sudo >/dev/null
+  ca-certificates curl gnupg git jq make ufw unattended-upgrades sudo >/dev/null
 
 # ── 2. Non-root user ────────────────────────────────────────────────────────
 # uid 1000 must match the container's `paseo` user, or bind-mounted files are

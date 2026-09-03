@@ -72,8 +72,23 @@ tunnel: ## Start the named Cloudflare tunnel (needs TUNNEL_TOKEN in .env)
 	@echo "remember: add the public hostname to PASEO_HOSTNAMES in .env, then: make restart"
 
 quick-tunnel: ## Start a throwaway trycloudflare.com tunnel (no account, NO AUTH)
-	$(DC) --profile quick-tunnel up -d cloudflared-quick
-	@sleep 6; $(MAKE) --no-print-directory tunnel-url
+	@$(DC) --profile quick-tunnel up -d cloudflared-quick
+	@printf 'waiting for the tunnel URL'
+	@for i in $$(seq 1 20); do \
+	   url=$$($(DC) logs cloudflared-quick 2>/dev/null | grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' | tail -1); \
+	   [ -n "$$url" ] && break; printf '.'; sleep 2; done; echo; \
+	 if [ -z "$$url" ]; then echo "no URL yet — make logs S=cloudflared-quick"; exit 1; fi; \
+	 host=$${url#https://}; \
+	 if grep -q "^PASEO_HOSTNAMES=.*$$host" .env; then \
+	   echo "hostname already allowed"; \
+	 else \
+	   cur=$$(grep '^PASEO_HOSTNAMES=' .env | cut -d= -f2-); \
+	   new=$$( [ -n "$$cur" ] && echo "$$cur,$$host" || echo "$$host" ); \
+	   tmp=$$(mktemp); sed "s|^PASEO_HOSTNAMES=.*|PASEO_HOSTNAMES=$$new|" .env > $$tmp && mv $$tmp .env; \
+	   echo "added $$host to PASEO_HOSTNAMES (Paseo rejects unknown Host headers)"; \
+	   $(DC) up -d paseo >/dev/null 2>&1; sleep 6; \
+	 fi; \
+	 echo; echo "  $$url"; echo
 
 tunnel-url: ## Print the quick-tunnel public URL
 	@$(DC) logs cloudflared-quick 2>/dev/null \
