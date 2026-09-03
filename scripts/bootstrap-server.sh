@@ -93,7 +93,10 @@ else
   chmod 600 /swapfile && mkswap -q /swapfile && swapon /swapfile
   grep -q '^/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
   sysctl -qw vm.swappiness=10
-  grep -q '^vm.swappiness' /etc/sysctl.conf || echo 'vm.swappiness=10' >> /etc/sysctl.conf
+  # Ubuntu 26.04 ships no /etc/sysctl.conf; use the drop-in dir, which every
+  # current Debian/Ubuntu reads.
+  mkdir -p /etc/sysctl.d
+  echo 'vm.swappiness=10' > /etc/sysctl.d/99-devstack-swappiness.conf
 fi
 
 # ── 5. Firewall ─────────────────────────────────────────────────────────────
