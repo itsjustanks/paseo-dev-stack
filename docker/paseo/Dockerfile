@@ -51,12 +51,22 @@ RUN curl -fsSL https://astral.sh/uv/install.sh | \
     && uv --version
 
 # ── Supabase CLI (official .deb; npm global install is explicitly discouraged)
-ARG SUPABASE_VERSION=2.66.4
-RUN arch="$(dpkg --print-architecture)" \
-    && curl -fsSL -o /tmp/supabase.deb \
-       "https://github.com/supabase/cli/releases/download/v${SUPABASE_VERSION}/supabase_${SUPABASE_VERSION}_linux_${arch}.deb" \
-    && dpkg -i /tmp/supabase.deb && rm -f /tmp/supabase.deb \
-    && supabase --version
+# SUPABASE_VERSION is empty by default => resolve the latest release at build
+# time. A hardcoded pin silently 404s the day upstream moves on, so pin only
+# deliberately: --build-arg SUPABASE_VERSION=2.116.0
+ARG SUPABASE_VERSION=
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    ver="${SUPABASE_VERSION}"; \
+    if [ -z "$ver" ]; then \
+      ver="$(curl -fsSL https://api.github.com/repos/supabase/cli/releases/latest \
+             | grep -m1 '"tag_name"' | sed -E 's/.*"v?([^"]+)".*/\1/')"; \
+    fi; \
+    [ -n "$ver" ] || { echo "could not resolve supabase version"; exit 1; }; \
+    curl -fsSL -o /tmp/supabase.deb \
+      "https://github.com/supabase/cli/releases/download/v${ver}/supabase_${ver}_linux_${arch}.deb"; \
+    dpkg -i /tmp/supabase.deb; rm -f /tmp/supabase.deb; \
+    supabase --version
 
 # ── GitHub CLI ──────────────────────────────────────────────────────────────
 RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \

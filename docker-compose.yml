@@ -14,7 +14,7 @@ services:
       context: .
       dockerfile: docker/paseo/Dockerfile
       args:
-        SUPABASE_VERSION: ${SUPABASE_VERSION:-2.66.4}
+        SUPABASE_VERSION: ${SUPABASE_VERSION:-}
         EXTRA_NPM_PACKAGES: ${EXTRA_NPM_PACKAGES:-}
     image: devstack/paseo-agents:latest
     container_name: devstack-paseo
