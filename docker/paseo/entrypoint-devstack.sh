@@ -10,6 +10,7 @@ log() { printf '[devstack] %s\n' "$*" >&2; }
 
 HOME_DIR=/home/paseo
 SEED=/opt/devstack-seed
+SEED_MEM=/opt/devstack-seed-memory   # sibling mount; see docker-compose.yml
 
 # ── Ownership ───────────────────────────────────────────────────────────────
 # A named volume starts empty and root-owned; a bind mount may carry host uids.
@@ -48,9 +49,9 @@ seed_file "$SEED/codex/config.toml"    "$HOME_DIR/.codex/config.toml"
 # store via the autoMemoryDirectory setting, seeded in settings.json.
 MEM_DIR="$HOME_DIR/.claude/memory"
 run_as_paseo mkdir -p "$MEM_DIR"
-if [ -d "$SEED/memory" ] && [ -z "$(ls -A "$MEM_DIR" 2>/dev/null)" ]; then
-  if compgen -G "$SEED/memory/*.md" > /dev/null; then
-    run_as_paseo cp -n "$SEED"/memory/*.md "$MEM_DIR"/ 2>/dev/null || true
+if [ -d "$SEED_MEM" ] && [ -z "$(ls -A "$MEM_DIR" 2>/dev/null)" ]; then
+  if compgen -G "$SEED_MEM/*.md" > /dev/null; then
+    run_as_paseo cp -n "$SEED_MEM"/*.md "$MEM_DIR"/ 2>/dev/null || true
     log "seeded auto-memory ($(ls -1 "$MEM_DIR"/*.md 2>/dev/null | wc -l) files)"
   fi
 fi

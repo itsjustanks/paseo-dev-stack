@@ -36,9 +36,12 @@ services:
       - paseo-home:/home/paseo
       # Your code. Bind mount so it's editable from the host too.
       - ${WORKSPACE_DIR:-./workspace}:/workspace
-      # Seed config copied in on first boot only (never overwrites).
+      # Seed config + memory, copied in on FIRST BOOT ONLY (never overwrites).
+      # These are two SIBLING mounts, not nested: mounting ./memory inside a
+      # read-only ./config mount fails, because Docker cannot create the
+      # mountpoint inside a read-only layer.
       - ./config:/opt/devstack-seed:ro
-      - ./memory:/opt/devstack-seed/memory:ro
+      - ./memory:/opt/devstack-seed-memory:ro
     # Chromium in a container dies on the default 64MB /dev/shm.
     shm_size: 1gb
     security_opt:
