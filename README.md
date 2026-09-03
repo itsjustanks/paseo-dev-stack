@@ -69,6 +69,33 @@ The installer detects the OS and skips privileged host setup on a Mac.
 | **Agent CLIs** | Claude Code · Codex · Kimi Code · Cursor Agent |
 | **Dev tools** | Supabase CLI · gh · git · Node 22 · Python 3 + uv · ripgrep · jq |
 
+## Repo layout
+
+Declarative where it can be, with each concern in its own file — nothing is a
+monolithic shell script.
+
+```
+docker-compose.yml        the stack: services, ports, volumes, networks
+.env.example              every knob, documented (copy to .env)
+docker/paseo/
+  Dockerfile              the agent image
+  entrypoint-devstack.sh  first-boot seeding, then hands off to Paseo's entrypoint
+  agent-env.sh            shell env for interactive sessions
+config/                   seed config, copied in on first boot only
+  claude/settings.json    auto-memory dir, permissions, output style
+  codex/config.toml       9router provider block
+memory/                   auto-memory seeds, version-controlled
+scripts/
+  bootstrap-server.sh     host prep: user, docker, swap, firewall
+  doctor.sh               verifies every component; exits non-zero on failure
+  sync-memory.sh          memory push/pull between repo and container
+install.sh                thin entrypoint: detects OS, delegates to the above
+Makefile                  the command surface (make up / doctor / tunnel ...)
+```
+
+Change behaviour by editing `.env` or `docker-compose.yml`, not by forking a
+script. `make doctor` is the test suite.
+
 ## Why it is built this way
 
 **Agents can't run as root.** Claude Code and Codex refuse elevated/bypass
