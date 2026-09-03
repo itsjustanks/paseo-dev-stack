@@ -5,6 +5,7 @@ DC    := docker compose
 
 .PHONY: help up down restart build rebuild logs ps shell root doctor \
         auth-claude auth-codex auth-kimi auth-cursor auth-all \
+        code-tunnel code-tunnel-bg code-tunnel-url \
         tunnel quick-tunnel tunnel-url router memory-push memory-pull \
         browser-test clean nuke
 
@@ -78,6 +79,21 @@ tunnel-url: ## Print the quick-tunnel public URL
 	@$(DC) logs cloudflared-quick 2>/dev/null \
 	  | grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' | tail -1 \
 	  || echo "no URL yet — try: make logs S=cloudflared-quick"
+
+# ── VS Code dev tunnel ──────────────────────────────────────────────────────
+code-tunnel: ## Start a VS Code dev tunnel (prints a vscode.dev URL to open)
+	@echo "Follow the device-login prompt; the tunnel then survives restarts."
+	$(DC) exec -it --user paseo paseo code tunnel --accept-server-license-terms --name devstack
+
+code-tunnel-bg: ## Run the VS Code dev tunnel in the background
+	$(DC) exec -d --user paseo paseo bash -lc \
+	  'code tunnel --accept-server-license-terms --name devstack >> /home/paseo/.vscode-tunnel.log 2>&1'
+	@echo "started; URL: make code-tunnel-url"
+
+code-tunnel-url: ## Print the vscode.dev URL for the running tunnel
+	@$(DC) exec -T --user paseo paseo bash -lc \
+	  'grep -oE "https://vscode.dev/tunnel/[^ ]+" /home/paseo/.vscode-tunnel.log 2>/dev/null | tail -1' \
+	  || echo "not started yet — make code-tunnel-bg"
 
 router: ## Open the 9router dashboard URL
 	@echo "http://127.0.0.1:$${NINEROUTER_PORT:-20128}/dashboard"

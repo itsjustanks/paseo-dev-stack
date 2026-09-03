@@ -147,6 +147,24 @@ RUN chmod -R a+rX "$AGENT_HOME" \
     && echo 'paseo ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/90-paseo \
     && chmod 0440 /etc/sudoers.d/90-paseo
 
+# ── VS Code CLI (dev tunnels) ───────────────────────────────────────────────
+# `code tunnel` exposes this container as a remote in vscode.dev — a full
+# browser IDE over Microsoft's tunnel, no inbound port needed.
+# The "cli-alpine-*" build is the statically-linked musl binary, which is the
+# right choice on Debian too (the cli-linux-* slug does not exist -> 404).
+RUN set -eux; \
+    case "$(dpkg --print-architecture)" in \
+      amd64) vsarch=cli-alpine-x64 ;; \
+      arm64) vsarch=cli-alpine-arm64 ;; \
+      *) echo "unsupported arch for VS Code CLI"; exit 1 ;; \
+    esac; \
+    curl -fsSL "https://code.visualstudio.com/sha/download?build=stable&os=${vsarch}" \
+      -o /tmp/vscode-cli.tar.gz; \
+    tar -xzf /tmp/vscode-cli.tar.gz -C /usr/local/bin; \
+    rm -f /tmp/vscode-cli.tar.gz; \
+    chmod +x /usr/local/bin/code; \
+    code --version
+
 # ── Paseo plugin: 9router ───────────────────────────────────────────────────
 # Surfaces 9router's accounts, quotas and models in the Paseo sidebar.
 # Vendored into the image; the entrypoint registers it on first boot, because

@@ -19,8 +19,14 @@ for t in "claude --version" "codex --version" "kimi --version" \
          "agent-browser --version" "node --version" "python3 --version" \
          "uv --version" "git --version"; do
   bin="${t%% *}"
-  out="$($DC exec -T --user paseo paseo bash -lc "$t" 2>&1 | head -1)"
-  if [ $? -eq 0 ] && [ -n "$out" ]; then ok "$bin — $out"; else bad "$bin — ${out:-not found}"; fi
+  # Judge on EXIT CODE, not on the first line: several CLIs print a harmless
+  # warning to stderr before the version (codex emits a PATH-alias warning
+  # inside a container), and reading line 1 would report a working tool as
+  # broken. Filter warning lines out of the version we display.
+  out="$($DC exec -T --user paseo paseo bash -lc "$t" 2>&1)"; rc=$?
+  ver="$(printf '%s\n' "$out" | grep -viE '^(warning|warn|note):' | grep -v '^$' | head -1)"
+  if [ $rc -eq 0 ] && [ -n "$ver" ]; then ok "$bin — $ver"
+  else bad "$bin — ${ver:-not found}"; fi
 done
 
 echo "── persistence (survives the /home/paseo volume mount) ──"
@@ -48,6 +54,13 @@ if $DC exec -T --user paseo paseo bash -lc \
      'agent-browser goto https://example.com >/dev/null 2>&1 && agent-browser snapshot 2>/dev/null | head -3' \
      | grep -qi 'example'; then ok "agent-browser rendered a page"
 else bad "agent-browser could not render (check shm_size / seccomp)"; fi
+
+echo "── paseo plugins ──"
+plugs="$($DC exec -T --user paseo paseo bash -lc \
+  'ls -1 /home/paseo/.paseo/plugins 2>/dev/null' 2>/dev/null | tr -d '\r')"
+if [ -n "$plugs" ]; then
+  while read -r p; do [ -n "$p" ] && ok "plugin: $p"; done <<< "$plugs"
+else note "no plugins registered"; fi
 
 echo "── tunnel ──"
 if $DC ps --format '{{.Service}}' 2>/dev/null | grep -q cloudflared; then
