@@ -69,7 +69,10 @@ services:
     container_name: devstack-tunnel
     restart: unless-stopped
     profiles: [tunnel]
-    command: tunnel --no-autoupdate run --token ${TUNNEL_TOKEN:?set TUNNEL_TOKEN in .env or use the quick profile}
+    # NOTE: uses :- not :? — compose interpolates every service's variables even
+    # for inactive profiles, so :? would break `up` whenever TUNNEL_TOKEN is
+    # unset. An empty token fails fast in this container only.
+    command: tunnel --no-autoupdate run --token ${TUNNEL_TOKEN:-}
     depends_on: [paseo]
     networks: [devstack]
 

@@ -66,6 +66,7 @@ auth-all: ## Log in to every agent CLI, one after another
 
 # ── Tunnels ─────────────────────────────────────────────────────────────────
 tunnel: ## Start the named Cloudflare tunnel (needs TUNNEL_TOKEN in .env)
+	@grep -qE '^TUNNEL_TOKEN=.+' .env || { echo "TUNNEL_TOKEN is not set in .env — use 'make quick-tunnel' for a throwaway URL"; exit 1; }
 	$(DC) --profile tunnel up -d cloudflared
 	@echo "remember: add the public hostname to PASEO_HOSTNAMES in .env, then: make restart"
 
