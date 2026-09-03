@@ -62,6 +62,21 @@ if [ -n "$plugs" ]; then
   while read -r p; do [ -n "$p" ] && ok "plugin: $p"; done <<< "$plugs"
 else note "no plugins registered"; fi
 
+echo "── memory guards ──"
+if command -v systemctl >/dev/null 2>&1; then
+  for t in devserver-guard cache-trim; do
+    if systemctl is-enabled "$t.timer" >/dev/null 2>&1; then ok "$t.timer enabled"
+    else note "$t.timer not installed (make guards)"; fi
+  done
+else note "no systemd — guards are Linux-host only (run 'make guards-dry' to preview)"; fi
+lim="$($DC exec -T --user paseo paseo bash -lc \
+  'cat /sys/fs/cgroup/memory.max 2>/dev/null || echo max' 2>/dev/null | tr -d '\r')"
+if [ "$lim" = max ] || [ -z "$lim" ]; then
+  note "container memory: unlimited (set PASEO_MEM_LIMIT in .env to cap it)"
+else ok "container memory capped at $(( lim / 1024 / 1024 / 1024 ))GB"; fi
+avail="$(awk '/MemAvailable/{printf "%.1f", $2/1048576}' /proc/meminfo 2>/dev/null)"
+[ -n "$avail" ] && ok "host memory available: ${avail}GB"
+
 echo "── tunnel ──"
 if $DC ps --format '{{.Service}}' 2>/dev/null | grep -q cloudflared; then
   ok "a cloudflared container is running"

@@ -7,6 +7,7 @@ DC    := docker compose
         auth-claude auth-codex auth-kimi auth-cursor auth-all \
         code-tunnel code-tunnel-bg code-tunnel-url \
         tunnel quick-tunnel tunnel-url router memory-push memory-pull \
+        guards guards-status guards-dry mem \
         browser-test clean nuke
 
 help: ## Show this help
@@ -118,6 +119,32 @@ memory-push: ## Copy ./memory/*.md into the container's live memory store
 	@./scripts/sync-memory.sh push
 memory-pull: ## Copy the container's memory store back into ./memory
 	@./scripts/sync-memory.sh pull
+
+# ── Memory / disk guards ────────────────────────────────────────────────────
+guards: ## Install the host memory+disk guards (systemd timers)
+	sudo DEVSTACK_USER=$${DEVSTACK_USER:-paseo} WORKSPACE_ROOT=$$(pwd)/workspace \
+	  bash scripts/guard/install-guards.sh
+
+guards-status: ## Show guard timers and recent activity
+	@systemctl list-timers --all 2>/dev/null | grep -E 'devserver-guard|cache-trim' || echo "guards not installed (make guards)"
+	@echo; echo "── recent reaps ──"
+	@tail -15 ~/.paseo/devserver-guard.log 2>/dev/null || echo "(no log yet — nothing has needed reaping)"
+
+guards-dry: ## Show what the guards WOULD do right now, without doing it
+	@echo "── devserver-guard ──"
+	@DEVSERVER_GUARD_DRY_RUN=1 DEVSERVER_GUARD_STDOUT=1 python3 scripts/guard/devserver-guard.py || true
+	@echo "── cache-trim ──"
+	@CACHE_TRIM_DRY_RUN=1 CACHE_TRIM_STDOUT=1 CACHE_TRIM_ROOTS=$$(pwd)/workspace \
+	  python3 scripts/guard/cache-trim.py || true
+
+mem: ## Show memory pressure: host, container, and any dev servers
+	@echo "── host ──"; free -h 2>/dev/null | head -2 || vm_stat | head -5
+	@echo; echo "── containers ──"; docker stats --no-stream \
+	  --format 'table {{.Name}}\t{{.MemUsage}}\t{{.MemPerc}}' 2>/dev/null || true
+	@echo; echo "── dev servers ──"
+	@ps -eo pid=,etimes=,rss=,args= 2>/dev/null | grep -E 'next-server \(v' | grep -v grep \
+	  | awk '{printf "  pid %s  %.1fGB  %.1fh  %s\n", $$1, $$3/1048576, $$2/3600, $$4}' \
+	  || echo "  none running"
 
 # ── Checks ──────────────────────────────────────────────────────────────────
 doctor: ## Verify every tool inside the container

@@ -145,7 +145,15 @@ warn "ufw does not filter docker-published ports — keep the 127.0.0.1 binds in
 # ── 6. Unattended upgrades ──────────────────────────────────────────────────
 dpkg-reconfigure -f noninteractive unattended-upgrades >/dev/null 2>&1 || true
 
-# ── 7. Repo ─────────────────────────────────────────────────────────────────
+# ── 7. Memory / disk guards ─────────────────────────────────────────────────
+# A Next dev server's memory is native (Turbopack is Rust), so NODE_OPTIONS
+# cannot bound it and the OOM killer picks the wrong victim. These reap the
+# cause; see scripts/guard/.
+if [ -x "$(dirname "$0")/guard/install-guards.sh" ]; then
+  DEVSTACK_USER="$DEVSTACK_USER" bash "$(dirname "$0")/guard/install-guards.sh" || warn "guard install failed"
+fi
+
+# ── 8. Repo ─────────────────────────────────────────────────────────────────
 if [ -n "$DEVSTACK_REPO" ]; then
   if [ -d "$DEVSTACK_DIR/.git" ]; then
     log "repo present; pulling"
