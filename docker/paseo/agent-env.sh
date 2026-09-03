@@ -5,8 +5,9 @@
 # agent-browser: Chrome for Testing lives outside $HOME so it survives the
 # /home/paseo volume mount. Do NOT export XDG_CACHE_HOME globally — Paseo uses
 # it for its own cache.
-export AGENT_BROWSER_CACHE="${AGENT_BROWSER_CACHE:-/opt/agent-browser-cache}"
-agent-browser() { XDG_CACHE_HOME="$AGENT_BROWSER_CACHE" command agent-browser "$@"; }
+# Chrome for Testing is baked into the image and symlinked to
+# ~/.agent-browser by the entrypoint; this pins the binary explicitly too.
+[ -f /opt/chrome-path ] && export AGENT_BROWSER_EXECUTABLE_PATH="$(cat /opt/chrome-path)"
 
 # 9router: only wire up when both vars are present, so an unconfigured stack
 # still falls back to each CLI's normal OAuth login.

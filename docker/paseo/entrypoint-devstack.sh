@@ -70,9 +70,35 @@ if [ -n "${NINEROUTER_URL:-}" ] && [ -n "${NINEROUTER_KEY:-}" ]; then
 fi
 
 # ── agent-browser ───────────────────────────────────────────────────────────
-# Chrome for Testing was cached at build time outside $HOME; point the CLI at
-# that cache without clobbering Paseo's own XDG_CACHE_HOME.
-export AGENT_BROWSER_CACHE="${AGENT_BROWSER_CACHE:-/opt/agent-browser-cache}"
+# Chrome for Testing was downloaded at build time into $AGENT_HOME. agent-browser
+# looks under $HOME/.agent-browser/browsers and ignores XDG_CACHE_HOME, and $HOME
+# is now the volume — so link the baked copy into place rather than re-downloading
+# ~150MB per container.
+BAKED_AB=/opt/agent-home/.agent-browser
+if [ -d "$BAKED_AB/browsers" ] && [ ! -e "$HOME_DIR/.agent-browser" ]; then
+  run_as_paseo ln -s "$BAKED_AB" "$HOME_DIR/.agent-browser"
+  log "linked prebuilt Chrome into $HOME_DIR/.agent-browser"
+fi
+[ -f /opt/chrome-path ] && export AGENT_BROWSER_EXECUTABLE_PATH="$(cat /opt/chrome-path)"
+
+# ── Paseo plugins ───────────────────────────────────────────────────────────
+# Plugins are vendored in the image but must be registered into ~/.paseo, which
+# lives on the volume — so this runs at boot, not build. Idempotent.
+PLUGIN_SRC="${PASEO_PLUGIN_SOURCE:-/opt/paseo-plugins}"
+PLUGIN_DEST="$HOME_DIR/.paseo/plugins"
+if [ -d "$PLUGIN_SRC" ]; then
+  run_as_paseo mkdir -p "$PLUGIN_DEST"
+  for plug in "$PLUGIN_SRC"/*; do
+    [ -d "$plug" ] || continue
+    name="$(basename "$plug")"
+    if [ -e "$PLUGIN_DEST/$name" ]; then
+      log "plugin $name already installed"
+    else
+      run_as_paseo cp -r "$plug" "$PLUGIN_DEST/$name"
+      log "installed plugin: $name"
+    fi
+  done
+fi
 
 log "handing off to paseo entrypoint"
 exec /usr/local/bin/paseo-docker-entrypoint "$@"

@@ -98,11 +98,22 @@ RUN HOME="$AGENT_HOME" CODEX_INSTALL_DIR=/usr/local/bin \
       bash -c 'curl -fsSL https://chatgpt.com/codex/install.sh | sh' \
     && codex --version
 
-# Kimi Code — KIMI_INSTALL_DIR=/usr/local is the documented system-wide install.
-# (npm "kimi-cli" is an UNRELATED package — do not use it.)
-RUN KIMI_INSTALL_DIR=/usr/local HOME="$AGENT_HOME" bash -c \
-      'curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash' \
-    && /usr/local/bin/kimi --version 2>/dev/null || true
+# Kimi Code. The official installer pulls from code.kimi.com, which is
+# unreachable from some datacenters (observed: connect timeout from a DO
+# droplet). Try it, then fall back to the npm package, which ships the same
+# version. NOTE: npm "kimi-cli" is an UNRELATED package — the correct one is
+# @moonshot-ai/kimi-code.
+RUN set -eux; \
+    if KIMI_INSTALL_DIR=/usr/local HOME="$AGENT_HOME" \
+       timeout 120 bash -c 'curl -fsSL --max-time 60 https://code.kimi.com/kimi-code/install.sh | bash' \
+       && [ -x /usr/local/bin/kimi ]; then \
+      echo "kimi: installed from official CDN"; \
+    else \
+      echo "kimi: CDN unreachable, falling back to npm"; \
+      npm install -g @moonshot-ai/kimi-code; \
+    fi; \
+    command -v kimi >/dev/null || { echo "kimi install FAILED"; exit 1; }; \
+    kimi --version || true
 
 # Cursor Agent — hardcodes $HOME/.local/{bin,share}; no env override exists,
 # so redirecting HOME is the only way to keep it off the volume.
@@ -112,16 +123,19 @@ RUN HOME="$AGENT_HOME" bash -c 'curl -fsSL https://cursor.com/install | bash' \
     && cursor-agent --version 2>/dev/null || true
 
 # ── agent-browser (headless Chromium for AI agents) ─────────────────────────
-# Chrome for Testing (~150MB) is cached OUTSIDE $HOME so it survives into the
-# image instead of being re-downloaded on every fresh container.
-# NOTE: we do NOT set a global XDG_CACHE_HOME — the base image points that at
-# the volume for Paseo's own cache and overriding it breaks Paseo.
-ENV AGENT_BROWSER_CACHE=/opt/agent-browser-cache
-RUN npm install -g agent-browser \
-    && mkdir -p "$AGENT_BROWSER_CACHE" \
-    && HOME="$AGENT_HOME" XDG_CACHE_HOME="$AGENT_BROWSER_CACHE" \
-       agent-browser install \
-    && chmod -R a+rX "$AGENT_BROWSER_CACHE"
+# Chrome for Testing (~150MB) is baked into the image so it is not re-fetched
+# per container. agent-browser looks for it at $HOME/.agent-browser/browsers and
+# ignores XDG_CACHE_HOME, so with HOME=$AGENT_HOME at build time it lands in the
+# image; we then expose it via AGENT_BROWSER_CHROME for the runtime HOME.
+# (We must NOT set a global XDG_CACHE_HOME — the base image points that at the
+# volume for Paseo's own cache.)
+RUN set -eux; \
+    npm install -g agent-browser; \
+    HOME="$AGENT_HOME" agent-browser install; \
+    chrome="$(find "$AGENT_HOME/.agent-browser/browsers" -maxdepth 3 -type f -name chrome | head -1)"; \
+    [ -n "$chrome" ] || { echo "Chrome not found after install"; exit 1; }; \
+    echo "$chrome" > /opt/chrome-path; \
+    chmod -R a+rX "$AGENT_HOME/.agent-browser"
 
 # Optional extras, e.g. --build-arg EXTRA_NPM_PACKAGES="opencode-ai"
 ARG EXTRA_NPM_PACKAGES=""
@@ -133,10 +147,26 @@ RUN chmod -R a+rX "$AGENT_HOME" \
     && echo 'paseo ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/90-paseo \
     && chmod 0440 /etc/sudoers.d/90-paseo
 
+# ── Paseo plugin: 9router ───────────────────────────────────────────────────
+# Surfaces 9router's accounts, quotas and models in the Paseo sidebar.
+# Vendored into the image; the entrypoint registers it on first boot, because
+# `paseo plugin add` writes into ~/.paseo, which is on the volume.
+ARG PLUGIN_9ROUTER_REPO=https://github.com/itsjustanks/paseo-plugin-9router
+ARG PLUGIN_9ROUTER_REF=main
+RUN git clone --depth 1 -b "$PLUGIN_9ROUTER_REF" "$PLUGIN_9ROUTER_REPO" \
+      /opt/paseo-plugins/9router \
+    && rm -rf /opt/paseo-plugins/9router/.git \
+    && chmod -R a+rX /opt/paseo-plugins
+
 COPY docker/paseo/entrypoint-devstack.sh /usr/local/bin/entrypoint-devstack.sh
 COPY docker/paseo/agent-env.sh           /etc/profile.d/10-devstack-agents.sh
 RUN chmod +x /usr/local/bin/entrypoint-devstack.sh \
     && chmod 0644 /etc/profile.d/10-devstack-agents.sh
+
+ENV PATH="/usr/local/bin:/home/paseo/.local/bin:${PATH}" \
+    npm_config_update_notifier=false \
+    DO_NOT_TRACK=1 \
+    PASEO_PLUGIN_SOURCE=/opt/paseo-plugins
 
 # Our entrypoint seeds config/memory then delegates to the base entrypoint,
 # which drops root → paseo via gosu. tini stays PID 1.
