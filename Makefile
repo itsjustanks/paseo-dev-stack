@@ -12,6 +12,20 @@ DC    := docker compose
         version update update-apply pair satellites satellites-down \
         browser-open browser-stream browser-view browser-test clean nuke
 
+# Running make as root inside this repo creates root-owned files (.env edits,
+# __pycache__, logs, workspace/) and the daemon — which runs as uid 1000 —
+# then cannot read its own state. Refuse, and point at the launcher that
+# drops privileges correctly.
+ifeq ($(shell id -u),0)
+ifneq ($(SUDO_USER),)
+$(warning )
+$(warning You are running make as root in $(CURDIR).)
+$(warning That creates root-owned files the daemon cannot read.)
+$(warning Use:  pds $(MAKECMDGOALS)   (or: sudo -u $(shell stat -c %U . 2>/dev/null || echo paseo) -H make $(MAKECMDGOALS)))
+$(warning )
+endif
+endif
+
 tui: ## Interactive control panel (start here)
 	@python3 scripts/tui.py
 

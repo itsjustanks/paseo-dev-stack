@@ -161,6 +161,15 @@ if [ ! -f .env ]; then
   fi
 fi
 
+# ─── pds launcher on PATH ───────────────────────────────────────────────────
+# So `pds` works when you ssh in as root: it locates the deployment and
+# re-executes as the owning user, which stops root from creating root-owned
+# files inside the repo (the daemon then cannot read its own state).
+if [ -f "$DEVSTACK_DIR/scripts/pds" ]; then
+  install -m 0755 "$DEVSTACK_DIR/scripts/pds" /usr/local/bin/pds
+  log "installed /usr/local/bin/pds  (run: pds)"
+fi
+
 # ─── systemd unit: survive reboots ──────────────────────────────────────────
 if command -v systemctl >/dev/null 2>&1; then
   cat > /etc/systemd/system/paseo-dev-stack.service <<UNIT

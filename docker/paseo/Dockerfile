@@ -48,12 +48,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # ── Package managers ────────────────────────────────────────────────────────
 # corepack ships with Node and is the supported way to get pnpm/yarn; it
 # installs shims that fetch the exact version a repo pins in packageManager.
-# COREPACK_HOME must sit outside /home/paseo or the volume masks the shims.
-ENV COREPACK_HOME=/usr/local/share/corepack     PNPM_HOME=/usr/local/share/pnpm     BUN_INSTALL=/usr/local/share/bun
-RUN set -eux;     mkdir -p "$COREPACK_HOME" "$PNPM_HOME" "$BUN_INSTALL";     corepack enable --install-directory /usr/local/bin;     corepack prepare pnpm@latest --activate;     corepack prepare yarn@stable --activate;     # bun: single static binary, no Node needed at runtime
-    curl -fsSL https://bun.sh/install | bash;     ln -sf "$BUN_INSTALL/bin/bun" /usr/local/bin/bun;     ln -sf "$BUN_INSTALL/bin/bunx" /usr/local/bin/bunx 2>/dev/null || true;     # Everything above is shared state a non-root user must be able to write
-    # (pnpm keeps its global store here, corepack caches downloaded versions).
-    chown -R paseo:paseo "$COREPACK_HOME" "$PNPM_HOME" "$BUN_INSTALL";     chmod -R a+rX "$COREPACK_HOME" "$PNPM_HOME" "$BUN_INSTALL";     pnpm --version; yarn --version; bun --version
+# All of these MUST live outside /home/paseo or the volume masks them at
+# runtime, and they must be writable by paseo (pnpm keeps a global store).
+ENV COREPACK_HOME=/usr/local/share/corepack \
+    PNPM_HOME=/usr/local/share/pnpm \
+    BUN_INSTALL=/usr/local/share/bun
+RUN set -eux; \
+    mkdir -p "$COREPACK_HOME" "$PNPM_HOME" "$BUN_INSTALL"; \
+    corepack enable --install-directory /usr/local/bin; \
+    corepack prepare pnpm@latest --activate; \
+    corepack prepare yarn@stable --activate; \
+    curl -fsSL https://bun.sh/install | bash; \
+    ln -sf "$BUN_INSTALL/bin/bun" /usr/local/bin/bun; \
+    ln -sf "$BUN_INSTALL/bin/bunx" /usr/local/bin/bunx || true; \
+    chown -R paseo:paseo "$COREPACK_HOME" "$PNPM_HOME" "$BUN_INSTALL"; \
+    chmod -R a+rX "$COREPACK_HOME" "$PNPM_HOME" "$BUN_INSTALL"; \
+    pnpm --version; yarn --version; bun --version
 
 # ── uv — fast Python package/venv manager ───────────────────────────────────
 RUN curl -fsSL https://astral.sh/uv/install.sh | \

@@ -64,6 +64,18 @@ if [ -n "$plugs" ]; then
   while read -r p; do [ -n "$p" ] && ok "plugin: $p"; done <<< "$plugs"
 else note "no plugins registered"; fi
 
+echo "── file ownership ──"
+# Root-owned files inside the repo or the volume are the single most common
+# cause of "the daemon starts but sees nothing".
+owner="$(stat -c %U . 2>/dev/null || stat -f %Su .)"
+stray="$(find . -maxdepth 2 -user root -not -path './.git/*' 2>/dev/null | head -5)"
+if [ -z "$stray" ]; then ok "repo is owned by $owner, no root-owned files"
+else
+  bad "root-owned files in the repo (the daemon runs as $owner and cannot write these):"
+  printf '%s\n' "$stray" | sed 's/^/      /'
+  note "fix: sudo chown -R $owner:$owner ."
+fi
+
 echo "── memory guards ──"
 if command -v systemctl >/dev/null 2>&1; then
   for t in devserver-guard cache-trim; do

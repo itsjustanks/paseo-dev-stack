@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# ─────────────────────────────────────────────────────────────────────────────
+# pds — run any paseo-dev-stack command from anywhere, as the right user.
+#
+#   pds              # the control panel
+#   pds doctor       # any make target
+#   pds pair
+#   pds restart
+#
+# Installed to /usr/local/bin, so it works when you ssh in as ROOT: it finds
+# the deployment, then re-executes as the service user.
+#
+# WHY THE USER SWITCH MATTERS: running make/docker as root inside the repo
+# creates root-owned files (.env edits, __pycache__, log files, and the
+# workspace itself). The daemon then cannot read its own state — the exact
+# "chown -R paseo:paseo or the daemon can't read it" failure this stack keeps
+# hitting. So root never runs these directly; it always drops to the owner.
+# ─────────────────────────────────────────────────────────────────────────────
+set -euo pipefail
+
+find_dir() {
+  local d
+  for d in "${PDS_DIR:-}" "$PWD" /home/*/paseo-dev-stack /opt/paseo-dev-stack \
+           "$HOME/paseo-dev-stack"; do
+    [ -n "$d" ] && [ -f "$d/docker-compose.yml" ] && [ -d "$d/docker/paseo" ] && {
+      printf '%s' "$d"; return 0; }
+  done
+  return 1
+}
+
+DIR="$(find_dir)" || {
+  echo "pds: no paseo-dev-stack deployment found." >&2
+  echo "     Set PDS_DIR=/path/to/paseo-dev-stack, or cd into it." >&2
+  exit 1
+}
+
+# The directory's owner is the service user, whatever it was named.
+OWNER="$(stat -c %U "$DIR" 2>/dev/null || stat -f %Su "$DIR")"
+
+if [ "$(id -un)" != "$OWNER" ]; then
+  if [ "$(id -u)" -ne 0 ]; then
+    echo "pds: $DIR belongs to '$OWNER'; run as $OWNER or root." >&2
+    exit 1
+  fi
+  # -H sets HOME to the target user's, so agent CLIs and docker read the right
+  # config. Without it they would still look in /root.
+  SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+  exec sudo -u "$OWNER" -H --preserve-env=TERM,COLORTERM \
+       "$SELF" "$@"
+fi
+
+cd "$DIR"
+if [ $# -eq 0 ]; then exec python3 scripts/tui.py; fi
+exec make "$@"
