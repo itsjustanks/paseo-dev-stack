@@ -186,7 +186,12 @@ Type=oneshot
 RemainAfterExit=yes
 User=${DEVSTACK_USER}
 WorkingDirectory=${DEVSTACK_DIR}
-ExecStart=/usr/bin/docker compose up -d --build
+# --no-build on boot, deliberately. A rebuild here compiles five agent CLIs
+# and Chromium at the worst possible moment: right after a reboot, often one
+# forced by the host running out of memory in the first place. Boot must
+# restore the stack from the image that already exists and nothing more.
+# Rebuilds are an explicit, attended action: `make build` or `pds update`.
+ExecStart=/usr/bin/docker compose up -d --no-build
 ExecStop=/usr/bin/docker compose down
 TimeoutStartSec=1800
 

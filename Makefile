@@ -172,14 +172,19 @@ router-tunnel: ## Temporarily expose the 9router dashboard (no auth; ctrl-C clos
 	@./scripts/router-tunnel.sh
 
 satellites: ## Start extra Paseo daemons sharing the same 9router pool
-	$(DC) --profile satellites up -d
+	@# --no-build: satellites reuse the main image. Building it here would
+	@# compile beside a running stack, which OOM-killed a 31GB host.
+	$(DC) --profile satellites up -d --no-build
 	@echo
 	@echo "  paseo-2 -> http://127.0.0.1:$${PASEO_PORT_2:-6768}"
 	@echo "  paseo-3 -> http://127.0.0.1:$${PASEO_PORT_3:-6769}"
 	@echo "  each has its own state + workspace; all share http://9router:20128"
 
 satellites-down: ## Stop the satellite daemons (their volumes are kept)
-	$(DC) --profile satellites stop paseo-2 paseo-3
+	@# Every slot, not just 2 and 3 -- naming a subset silently left tenants
+	@# 4-9 running while reporting the satellites stopped.
+	$(DC) --profile satellites stop \
+	  paseo-2 paseo-3 paseo-4 paseo-5 paseo-6 paseo-7 paseo-8 paseo-9
 
 router: ## Open the 9router dashboard URL
 	@echo "http://127.0.0.1:$${NINEROUTER_PORT:-20128}/dashboard"

@@ -1834,7 +1834,11 @@ class Actions:
                 return True
 
             if ch == "S":
-                c = self.compose("--profile", "satellites", "up", "-d")
+                # --no-build for the same reason new-daemon.sh uses it: this
+                # image carries five agent CLIs and Chromium, and compiling it
+                # beside a live stack is what OOM-killed a 31GB host. If the
+                # image is missing, say so rather than starting a build here.
+                c = self.compose("--profile", "satellites", "up", "-d", "--no-build")
                 if c:
                     self.stream_raw(c, "starting satellite daemons")
                 return True

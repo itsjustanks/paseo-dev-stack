@@ -426,6 +426,30 @@ Seeded config is written **only on first boot and only when absent**, so a
 daemon with its own Claude settings keeps them. `DEVSTACK_NO_SEED=1` skips
 seeding entirely.
 
+### Size the box before adding tenants
+
+By default the autotune gives the **main** container almost the whole machine,
+which is right for one tenant and leaves nothing for a second. Re-tune for the
+number of daemons you actually want, then bring the stack up:
+
+```bash
+./scripts/autotune-memory.sh --daemons 3   # split the budget three ways
+make up
+```
+
+`new-daemon.sh` refuses to add a daemon that does not fit, rather than
+oversubscribing the host — an uncapped second container next to a fully-sized
+main one is what OOM-killed a 31GB server during development: it stayed up
+enough to answer ping and accept TCP on port 22, but could no longer fork an
+sshd session. Satellites therefore inherit the tuned cap, and neither
+`make satellites` nor the systemd unit will ever *build* an image (that is
+`make build`, run when the box is idle).
+
+Rule of thumb: allow **2GB minimum** per daemon for agent work. Running
+Next/Turbopack dev servers inside a container needs far more — a first compile
+alone uses 6-11GB — so a heavily-split box will show a warning that its
+dev-server guard has dropped below the safe threshold.
+
 ## Pairing
 
 ```bash
