@@ -114,14 +114,14 @@ pe="$($DC exec -T --user paseo paseo bash -lc \
 [ "$pe" = True ] && ok "pluginsEnabled=true" \
                  || bad "pluginsEnabled=$pe — plugins will never load"
 
-echo "── project root ──"
-pr="$($DC exec -T --user paseo paseo bash -lc \
-  'python3 -c "import json,os;print(json.load(open(os.path.expanduser(\"~/.paseo/config.json\"))).get(\"projectRoot\") or \"\")"' 2>/dev/null | tr -d '\r')"
-case "$pr" in
-  /workspace*) ok "projectRoot=$pr (bind-mounted, visible on the host)" ;;
-  "")          bad "projectRoot unset — new projects default to \$HOME, which is INSIDE the volume and invisible on the host" ;;
-  *)           note "projectRoot=$pr (not the bind mount — files will not appear on the host)" ;;
-esac
+# Where new projects land. Paseo has no projectRoot setting, so the default is
+# $HOME — inside the volume, invisible from the host. Warn if projects are there.
+stray="$($DC exec -T --user paseo paseo bash -lc \
+  'paseo project ls 2>/dev/null | awk "NR>1 && \$4 ~ /^\/home\/paseo/ {print \$2}"' 2>/dev/null | tr -d '\r' | head -3)"
+if [ -n "$stray" ]; then
+  note "project(s) outside /workspace: $(echo "$stray" | tr '\n' ' ')"
+  note "  those live in the volume and are NOT visible on the host — prefer /workspace/<name>"
+else ok "all projects are under /workspace (visible on the host)"; fi
 
 echo "── daemon identity ──"
 hn="$($DC exec -T --user paseo paseo bash -lc 'hostname' 2>/dev/null | tr -d '\r')"

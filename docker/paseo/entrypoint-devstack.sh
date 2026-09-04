@@ -131,12 +131,15 @@ fi
 #     `paseo plugin reload` answers "Plugins are globally disabled". Since this
 #     image ships a plugin, the container turns it on.
 #
-#   projectRoot — Paseo otherwise offers $HOME for new projects, which inside a
-#     container is the /home/paseo VOLUME: invisible from the host, not in any
-#     backup, and confusing when a terminal opens somewhere you cannot see.
-#     /workspace is the bind mount, so that is where projects belong.
+# Applied only when ABSENT — an explicit choice is never overwritten.
 #
-# Both are only applied when ABSENT — an explicit choice is never overwritten.
+# NOTE: do NOT add keys the daemon's schema does not know. config.json is
+# validated strictly and an unrecognised key makes EVERY paseo command fail with
+# "Invalid config ... Unrecognized key", which looks like a broken daemon. There
+# is no supported projectRoot/projectsRoot setting in 0.7.2 — those strings exist
+# in the bundle but are not persisted-config keys. New projects therefore still
+# default to $HOME; create them under /workspace explicitly (that is the bind
+# mount, and the only path visible from the host).
 CFG="$HOME_DIR/.paseo/config.json"
 run_as_paseo mkdir -p "$(dirname "$CFG")"
 [ -f "$CFG" ] || run_as_paseo tee "$CFG" >/dev/null <<'JSON'
@@ -152,8 +155,6 @@ except Exception:
 changed = []
 if "pluginsEnabled" not in d:
     d["pluginsEnabled"] = True; changed.append("pluginsEnabled=true")
-if not d.get("projectRoot"):
-    d["projectRoot"] = "/workspace"; changed.append("projectRoot=/workspace")
 if changed:
     tmp = p + ".tmp"
     json.dump(d, open(tmp, "w"), indent=2)
