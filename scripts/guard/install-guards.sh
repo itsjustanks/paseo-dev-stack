@@ -23,7 +23,13 @@ id -u "$USER_NAME" >/dev/null 2>&1 || { echo "user $USER_NAME does not exist"; e
 install -d "$DEST"
 install -m 0755 "$SRC/devserver-guard.py" "$SRC/cache-trim.py" "$DEST/"
 
-WORKSPACE="${WORKSPACE_ROOT:-/home/$USER_NAME/devstack/workspace}"
+# The rename devstack -> paseo-dev-stack left this default pointing at a path
+# nothing creates, so cache-trim scanned nothing and still exited 0. Warn
+# rather than exit: this script runs under `set -euo pipefail` and its caller
+# swallows failures, so a hard exit here would silently drop BOTH guards --
+# including devserver-guard, the OOM reaper this stack exists for.
+WORKSPACE="${WORKSPACE_ROOT:-/home/$USER_NAME/paseo-dev-stack/workspace}"
+[ -d "$WORKSPACE" ] || echo "warning: $WORKSPACE does not exist yet; cache-trim will no-op until it does"
 
 cat > /etc/systemd/system/devserver-guard.service <<UNIT
 [Unit]

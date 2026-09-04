@@ -72,7 +72,7 @@ curl -fsSL https://raw.githubusercontent.com/itsjustanks/paseo-dev-stack/main/in
 ```
 
 The droplet comes up with the whole stack running. Generated passwords are left
-in `/root/paseo-dev-stack-credentials.txt`, and a `devstack.service` systemd unit
+in `/root/paseo-dev-stack-credentials.txt`, and a `paseo-dev-stack.service` systemd unit
 brings it back after a reboot. Pre-seed anything you like:
 
 ```bash
@@ -330,7 +330,9 @@ pds            # from anywhere, as any user — including root
 make tui       # from inside the repo
 ```
 
-`pds` is installed to `/usr/local/bin`. It finds the deployment, then
+`pds` is installed to `/usr/local/bin` **by the Linux server install only** —
+the macOS branch of `install.sh` returns before that step, so on a Mac use
+`make` from inside the repo. It finds the deployment, then
 re-executes as the user that owns it — so running it as root does **not**
 create root-owned files, which is the usual way this kind of stack breaks
 (the daemon runs as uid 1000 and then cannot read its own state).
@@ -509,8 +511,12 @@ The guard is deliberately conservative:
   "no match" and "scan failed" into one empty list is how a watchdog
   half-kills a live process tree.
 
-On macOS these run as launchd agents outside this repo; `make guards-dry` and
-`make mem` still work there.
+These guards are **Linux-only**. `devserver-guard.py` reads `/proc` and uses
+`ps -eo etimes`, a procps keyword BSD `ps` rejects — on macOS the scan aborts
+every pass (honestly, and loudly, but it does no work). `make guards` is a
+no-op without systemd, and `make guards-dry` will just print "scan failed".
+`make mem` works on macOS but shows the host and container sections only; the
+dev-server section is Linux-only for the same reason.
 
 ## Troubleshooting
 

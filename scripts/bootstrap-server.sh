@@ -155,15 +155,7 @@ warn "ufw does not filter docker-published ports — keep the 127.0.0.1 binds in
 # ── 6. Unattended upgrades ──────────────────────────────────────────────────
 dpkg-reconfigure -f noninteractive unattended-upgrades >/dev/null 2>&1 || true
 
-# ── 7. Memory / disk guards ─────────────────────────────────────────────────
-# A Next dev server's memory is native (Turbopack is Rust), so NODE_OPTIONS
-# cannot bound it and the OOM killer picks the wrong victim. These reap the
-# cause; see scripts/guard/.
-if [ -x "$(dirname "$0")/guard/install-guards.sh" ]; then
-  DEVSTACK_USER="$DEVSTACK_USER" bash "$(dirname "$0")/guard/install-guards.sh" || warn "guard install failed"
-fi
-
-# ── 8. Repo ─────────────────────────────────────────────────────────────────
+# ── 7. Repo ─────────────────────────────────────────────────────────────────
 if [ -n "$DEVSTACK_REPO" ]; then
   if [ -d "$DEVSTACK_DIR/.git" ]; then
     log "repo present; pulling"
@@ -180,6 +172,20 @@ if [ -d "$DEVSTACK_DIR" ]; then
     sudo -u "$DEVSTACK_USER" cp "$DEVSTACK_DIR/.env.example" "$DEVSTACK_DIR/.env" 2>/dev/null || true
     warn "created .env from the example — EDIT IT and set PASEO_PASSWORD"
   }
+fi
+
+# ── 8. Memory / disk guards ─────────────────────────────────────────────────
+# A Next dev server's memory is native (Turbopack is Rust), so NODE_OPTIONS
+# cannot bound it and the OOM killer picks the wrong victim. These reap the
+# cause; see scripts/guard/.
+#
+# AFTER the repo block, and passing WORKSPACE_ROOT explicitly. Installed
+# earlier it baked in install-guards.sh's fallback path, which the rename to
+# paseo-dev-stack left pointing at a directory nothing creates — so cache-trim
+# scanned nothing on every bootstrap-built host while reporting success.
+if [ -x "$(dirname "$0")/guard/install-guards.sh" ]; then
+  DEVSTACK_USER="$DEVSTACK_USER" WORKSPACE_ROOT="$DEVSTACK_DIR/workspace" \
+    bash "$(dirname "$0")/guard/install-guards.sh" || warn "guard install failed"
 fi
 
 cat <<BANNER

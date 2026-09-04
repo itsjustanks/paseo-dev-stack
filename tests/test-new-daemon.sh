@@ -89,5 +89,28 @@ else
   ok "refuses when the image does not exist"
 fi
 
+# ── 6. Stale slot keys are replaced, never duplicated ───────────────────────
+# The live 31GB host had PASEO_PORT_2/PASEO_MEM_LIMIT_2=0 with NO PASEO_NAME_2.
+# A blind append produced duplicate keys; compose reads the LAST one, so the
+# shipped '=0' (unlimited) overrode the computed cap and the satellite ate the
+# box. Reproduce that exact .env shape.
+cat > .env <<'STALE'
+PASEO_PASSWORD=x
+PASEO_PORT_2=6768
+PASEO_MEM_LIMIT_2=0
+PASEO_MEMSWAP_LIMIT_2=0
+STALE
+bash scripts/autotune-memory.sh --daemons 2 --write >/dev/null 2>&1
+: > "$FAKE_DOCKER_LOG"
+bash scripts/new-daemon.sh acme 6771 >/dev/null 2>&1 || true
+dupes="$(grep -oE '^[A-Z_]+_[0-9]+=' .env | sort | uniq -d || true)"
+[ -z "$dupes" ] && ok "replaces stale slot keys instead of duplicating them" \
+                || bad "duplicate keys in .env: $(printf '%s' "$dupes" | tr '\n' ' ')"
+eff="$(grep -E '^PASEO_MEM_LIMIT_2=' .env | tail -1 | cut -d= -f2-)"
+case "$eff" in
+  ''|0) bad "effective cap is '$eff' (unlimited — the bug that took the host down)" ;;
+  *)    ok  "effective cap after a stale slot is real ($eff)" ;;
+esac
+
 printf '\n  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

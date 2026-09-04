@@ -47,6 +47,10 @@ printf '%s' "$PORT" | grep -qE '^[0-9]{2,5}$' || die "invalid port '$PORT'"
 
 SLOT=""
 for n in 2 3 4 5 6 7 8 9; do
+  # A slot is TAKEN only when it is named -- autotune --daemons N pre-writes
+  # PASEO_MEM_LIMIT_n as a RESERVATION for a daemon that does not exist yet,
+  # and skipping those would send us to an unreserved slot whose budget check
+  # then (correctly) refuses. So claim the named-free slot...
   if ! grep -qE "^PASEO_NAME_${n}=" .env; then SLOT="$n"; break; fi
 done
 [ -n "$SLOT" ] || die "all satellite slots are in use; edit docker-compose.yml to add more"
@@ -162,6 +166,17 @@ log "adding daemon '$NAME' on port $PORT (slot $SLOT)"
 mkdir -p "$WSDIR"
 
 # Append rather than rewrite: an existing value is never touched.
+# Remove any pre-existing lines for this slot before appending. A live host
+# had PASEO_PORT_2/PASEO_MEM_LIMIT_2 present with no PASEO_NAME_2, so a blind
+# append produced DUPLICATE keys -- and compose reads the LAST one, which
+# silently reinstated the shipped '=0' (unlimited) over the computed cap.
+if grep -qE "^(PASEO_NAME|PASEO_PORT|PASEO_MEM_LIMIT|PASEO_MEMSWAP_LIMIT|WORKSPACE_DIR|AGENT_BROWSER_STREAM_PORT)_${SLOT}=" .env; then
+  log "slot ${SLOT} has stale entries; replacing them"
+  tmp="$(mktemp)"
+  grep -vE "^(PASEO_NAME|PASEO_PORT|PASEO_MEM_LIMIT|PASEO_MEMSWAP_LIMIT|WORKSPACE_DIR|AGENT_BROWSER_STREAM_PORT)_${SLOT}=" .env > "$tmp"
+  cat "$tmp" > .env && rm -f "$tmp"
+fi
+
 {
   printf '\n# ── daemon: %s ──\n' "$NAME"
   printf 'PASEO_NAME_%s=%s\n'    "$SLOT" "$NAME"
@@ -174,6 +189,17 @@ mkdir -p "$WSDIR"
   printf 'PASEO_MEMSWAP_LIMIT_%s=%s\n' "$SLOT" "$SAT_MEM"
   printf 'AGENT_BROWSER_STREAM_PORT_%s=%s\n' "$SLOT" "$((9223 + SLOT))"
 } >> .env
+
+# Belt and braces: a duplicate key is invisible (compose reads the last one)
+# and silently reinstates an unlimited memory cap. Fail loudly instead.
+dupes="$(grep -oE '^(PASEO_NAME|PASEO_PORT|PASEO_MEM_LIMIT|PASEO_MEMSWAP_LIMIT|WORKSPACE_DIR|AGENT_BROWSER_STREAM_PORT)_[0-9]+=' .env \
+         | sort | uniq -d || true)"
+if [ -n "$dupes" ]; then
+  die "duplicate keys in .env after writing slot ${SLOT}:
+$(printf '%s' "$dupes" | sed 's/^/    /')
+  compose reads the LAST value, so a stale '=0' would override the cap just
+  computed. Remove the older lines by hand, then re-run."
+fi
 
 log "starting it"
 # --no-build is the whole point of the preflight above: reuse the image that

@@ -78,7 +78,10 @@ services:
     security_opt:
       - seccomp:unconfined   # lets headless Chromium sandbox properly
     depends_on:
-      - 9router
+      # Wait for the router to actually answer, not just to exist. The nine
+      # satellite services inherit this via `extends`.
+      9router:
+        condition: service_healthy
     networks: [pds]
 
   9router:
@@ -100,6 +103,18 @@ services:
       INITIAL_PASSWORD: ${NINEROUTER_PASSWORD:-}
     volumes:
       - ninerouter-data:/app/data
+    # The image ships no healthcheck, so `depends_on` gated only on
+    # container-created: paseo could start 42ms after the router container and
+    # get connection-refused on its first model call. wget is present in this
+    # image; curl is NOT.
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:20128/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      # Generous: on a memory-pressured host a short budget turns a degraded
+      # start into a refused one, because paseo's depends_on is a hard gate.
+      start_period: 60s
     networks: [pds]
 
   # ── Satellite Paseo daemons ────────────────────────────────────────────────

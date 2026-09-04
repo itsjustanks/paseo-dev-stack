@@ -213,13 +213,23 @@ guards-dry: ## Show what the guards WOULD do right now, without doing it
 	  python3 scripts/guard/cache-trim.py || true
 
 mem: ## Show memory pressure: host, container, and any dev servers
-	@echo "── host ──"; free -h 2>/dev/null | head -2 || vm_stat | head -5
+	@# `free | head -2` exits 0 even when free is absent, so `||` never fired
+	@# and the host section printed nothing at all on macOS. Test explicitly.
+	@echo "── host ──"; if command -v free >/dev/null 2>&1; then free -h | head -2; \
+	 else vm_stat | head -5; fi
 	@echo; echo "── containers ──"; docker stats --no-stream \
 	  --format 'table {{.Name}}\t{{.MemUsage}}\t{{.MemPerc}}' 2>/dev/null || true
 	@echo; echo "── dev servers ──"
-	@ps -eo pid=,etimes=,rss=,args= 2>/dev/null | grep -E 'next-server \(v' | grep -v grep \
-	  | awk '{printf "  pid %s  %.1fGB  %.1fh  %s\n", $$1, $$3/1048576, $$2/3600, $$4}' \
-	  || echo "  none running"
+	@# `etimes` is a procps keyword BSD ps rejects: the column vanished, awk's
+	@# indices shifted, and RSS-in-KB was printed as an age (a 41-minute server
+	@# read as "87.5h", above the guard's 2h stale threshold). A memory tool
+	@# inventing numbers is worse than one that prints nothing, so this is
+	@# Linux-only rather than portable-but-wrong.
+	@if ps -eo etimes= -p 1 >/dev/null 2>&1; then \
+	   ps -eo pid=,etimes=,rss=,args= 2>/dev/null | grep -E 'next-server \(v' | grep -v grep \
+	     | awk '{printf "  pid %s  %.1fGB  %.1fh  %s\n", $$1, $$3/1048576, $$2/3600, $$4}' \
+	     || true; \
+	 else echo "  (Linux-only: BSD ps has no 'etimes'; run inside the container)"; fi
 
 # ── Updates ─────────────────────────────────────────────────────────────────
 version: ## Show the installed version

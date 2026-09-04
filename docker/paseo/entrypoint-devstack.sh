@@ -115,12 +115,27 @@ fi
 # 0.0.0.0:<bridge port> -> 127.0.0.1:<stream port> inside the container. The
 # HOST-side port is still bound to 127.0.0.1 by compose, so nothing is public.
 if [ -x /usr/local/bin/stream-bridge.py ]; then
+  _bp="${AGENT_BROWSER_STREAM_BRIDGE_PORT:-9224}"
+  # `restart: unless-stopped` recycles the container while the PREVIOUS boot's
+  # bridge can still hold 0.0.0.0:$_bp. The new one then loses the bind, exits
+  # 1, and the unconditional log line below claimed success anyway. Reap the
+  # stale one first -- a retry loop would not help (the holder does not exit)
+  # and could end up with two bridges fighting over one port.
+  pkill -f '[s]tream-bridge.py' 2>/dev/null || true
   run_as_paseo env \
     AGENT_BROWSER_STREAM_PORT="${AGENT_BROWSER_STREAM_PORT:-9223}" \
-    AGENT_BROWSER_STREAM_BRIDGE_PORT="${AGENT_BROWSER_STREAM_BRIDGE_PORT:-9224}" \
+    AGENT_BROWSER_STREAM_BRIDGE_PORT="$_bp" \
     nohup python3 /usr/local/bin/stream-bridge.py \
       >> "$HOME_DIR/.agent-browser-bridge.log" 2>&1 &
-  log "stream bridge on :${AGENT_BROWSER_STREAM_BRIDGE_PORT:-9224}"
+  _bpid=$!
+  # Report what actually happened. The old line logged success even when the
+  # process had already died of EADDRINUSE, and nothing else checks the bridge.
+  sleep 1
+  if kill -0 "$_bpid" 2>/dev/null; then
+    log "stream bridge on :$_bp"
+  else
+    log "WARNING: stream bridge failed to start (see ~/.agent-browser-bridge.log)"
+  fi
 fi
 
 # ── Shell skeleton ──────────────────────────────────────────────────────────

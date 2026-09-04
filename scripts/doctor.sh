@@ -9,8 +9,22 @@ note() { printf '  \033[33m·\033[0m %s\n' "$*"; }
 
 echo "── containers ──"
 for s in paseo 9router; do
-  st="$($DC ps --format '{{.Service}} {{.State}}' 2>/dev/null | awk -v s="$s" '$1==s{print $2}')"
-  [ "$st" = running ] && ok "$s running" || bad "$s not running (state: ${st:-absent})"
+  # State alone passes a container that is running but failing its own
+  # healthcheck. The paseo image defines one; a live host sat at
+  # Health=unhealthy FailingStreak=11 while this printed a green tick.
+  read -r st hl <<< "$($DC ps --format '{{.Service}} {{.State}} {{.Health}}' 2>/dev/null \
+                       | awk -v s="$s" '$1==s{print $2, $3}')"
+  if [ "$st" != running ]; then
+    bad "$s not running (state: ${st:-absent})"
+  elif [ "$hl" = starting ]; then
+    # Transient: the healthcheck has a start_period. Failing here would make
+    # doctor red for the first minute after every `make up`.
+    note "$s running, healthcheck still starting"
+  elif [ -n "$hl" ] && [ "$hl" != healthy ]; then
+    bad "$s running but health=$hl"
+  else
+    ok "$s running${hl:+ ($hl)}"
+  fi
 done
 
 echo "── agent CLIs ──"
@@ -163,9 +177,38 @@ fi
 
 echo "── memory guards ──"
 if command -v systemctl >/dev/null 2>&1; then
+  # `is-enabled` alone is a self-confirming check: it reads back the symlink
+  # install-guards.sh just wrote. On a live host it printed two green ticks
+  # while cache-trim scanned a non-existent root and devserver-guard failed
+  # 103/103 runs -- both exit 0 by design, so systemd's own Result is green
+  # too. Check the guard's own log, the only record of whether it did its job.
+  gu="${DEVSTACK_USER:-paseo}"
   for t in devserver-guard cache-trim; do
-    if systemctl is-enabled "$t.timer" >/dev/null 2>&1; then ok "$t.timer enabled"
-    else note "$t.timer not installed (make guards)"; fi
+    if ! systemctl is-enabled "$t.timer" >/dev/null 2>&1; then
+      note "$t.timer not installed (make guards)"; continue
+    fi
+    # Roots are colon-separated (cache-trim.py splits on ':'); flag only when
+    # NO root resolves, or a correct multi-root config reads as broken.
+    roots="$(systemctl show -p Environment --value "$t.service" 2>/dev/null \
+             | tr ' ' '\n' | sed -n 's/^CACHE_TRIM_ROOTS=//p')"
+    if [ -n "$roots" ]; then
+      good=0; IFS=: read -r -a _rs <<< "$roots"
+      for r in "${_rs[@]}"; do [ -n "$r" ] && [ -d "$r" ] && good=1; done
+      if [ "$good" -eq 0 ]; then
+        bad "$t.timer enabled but no configured root exists ($roots) — it trims nothing"
+        note "fix: sudo WORKSPACE_ROOT=\$(pwd)/workspace bash scripts/guard/install-guards.sh"
+        continue
+      fi
+    fi
+    # A guard that aborts every pass exits 0 and looks healthy. Its log is the
+    # only place that shows it. Empty/absent log = nothing needed reaping.
+    lg="/home/$gu/.paseo/$t.log"
+    if [ -s "$lg" ] && [ "$(grep -vc 'scan failed\|no roots to scan' "$lg" 2>/dev/null)" = 0 ]; then
+      bad "$t: every logged pass aborted — it has never done any work"
+      note "last: $(tail -1 "$lg" 2>/dev/null)"
+    else
+      ok "$t.timer enabled${roots:+ (roots: $roots)}"
+    fi
   done
 else note "no systemd — guards are Linux-host only (run 'make guards-dry' to preview)"; fi
 lim="$($DC exec -T --user paseo paseo bash -lc \

@@ -123,9 +123,19 @@ DEVSTACK_USER="$DEVSTACK_USER" bash "$STAGE/scripts/bootstrap-server.sh"
 
 # Place the repo in the service user's home.
 if [ "$STAGE" != "$DEVSTACK_DIR" ]; then
-  mkdir -p "$(dirname "$DEVSTACK_DIR")"
-  rm -rf "$DEVSTACK_DIR"
-  cp -r "$STAGE" "$DEVSTACK_DIR"
+  mkdir -p "$DEVSTACK_DIR"
+  # Overlay the code; NEVER rm -rf a live deployment. This one-liner is
+  # advertised for cloud-init and CI/CD, both of which re-fire — and .env,
+  # workspace/ and global-packages/ are gitignored, so they live only here.
+  # A wipe rotated PASEO_PASSWORD under running containers and deleted the
+  # user's code. They are absent from $STAGE, so an overlay leaves them alone.
+  if [ -f "$DEVSTACK_DIR/.env" ]; then
+    cp -a "$DEVSTACK_DIR/.env" "$DEVSTACK_DIR/.env.bak.$(date +%s)" || true
+    log "existing install at $DEVSTACK_DIR — updating code; .env, workspace/ and global-packages/ kept"
+  fi
+  # cp -r over the top does not remove files deleted upstream; a stale tracked
+  # file can linger. Deliberate: losing user state is the worse failure.
+  cp -r "$STAGE"/. "$DEVSTACK_DIR"/
 fi
 chown -R "$DEVSTACK_USER:$DEVSTACK_USER" "$DEVSTACK_DIR"
 # Both must exist and be owned by the service user BEFORE compose runs:
