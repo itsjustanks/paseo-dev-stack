@@ -135,11 +135,21 @@ fi
 # is that docker-compose.yml binds every port to 127.0.0.1 — ufw is only a
 # second layer for host services.
 log "configuring ufw (ssh only; all app traffic goes out via the tunnel)"
-ufw --force reset >/dev/null 2>&1 || true
-ufw default deny incoming >/dev/null
-ufw default allow outgoing >/dev/null
-ufw allow OpenSSH >/dev/null 2>&1 || ufw allow 22/tcp >/dev/null
-ufw --force enable >/dev/null
+# A firewall failure must not abort the install. ufw needs kernel netfilter,
+# which is absent in a container and can be missing on a minimal//custom-kernel
+# host — there it fails with "problem running ufw-init". The real protection is
+# that compose binds every port to 127.0.0.1 (Docker bypasses ufw anyway), so a
+# missing ufw is a warning, not a stop.
+if ufw_out="$( { ufw --force reset >/dev/null 2>&1 || true
+                 ufw default deny incoming >/dev/null
+                 ufw default allow outgoing >/dev/null
+                 ufw allow OpenSSH >/dev/null 2>&1 || ufw allow 22/tcp >/dev/null
+                 ufw --force enable >/dev/null; } 2>&1 )"; then
+  log "ufw enabled (ssh only)"
+else
+  warn "could not configure ufw — continuing"
+  [ -n "$ufw_out" ] && printf '%s\n' "$ufw_out" | sed 's/^/    /' | head -4
+fi
 warn "ufw does not filter docker-published ports — keep the 127.0.0.1 binds in docker-compose.yml"
 
 # ── 6. Unattended upgrades ──────────────────────────────────────────────────
