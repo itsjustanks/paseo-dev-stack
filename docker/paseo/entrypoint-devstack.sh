@@ -99,7 +99,8 @@ fi
 # and would rewrite user data on every boot.
 if [ "$(id -u)" = "0" ]; then
   for d in "$HOME_DIR/.agent-browser" "$HOME_DIR/.fly" "$HOME_DIR/.claude" \
-           "$HOME_DIR/.codex" "$HOME_DIR/.paseo" "$HOME_DIR/.config"; do
+           "$HOME_DIR/.codex" "$HOME_DIR/.paseo" "$HOME_DIR/.config" \
+           "$HOME_DIR/.npm" "$HOME_DIR/.cache" "$HOME_DIR/.local"; do
     [ -e "$d" ] && [ "$(stat -c %u "$d")" != "1000" ] && chown -R paseo:paseo "$d" || true
   done
 fi

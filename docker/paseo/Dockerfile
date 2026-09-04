@@ -45,6 +45,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # NOTE: Node 22 already ships in the base image at /usr/local/bin (tarball, not
 # dpkg). We deliberately do NOT install nodesource — it would collide.
 
+# ── Package managers ────────────────────────────────────────────────────────
+# corepack ships with Node and is the supported way to get pnpm/yarn; it
+# installs shims that fetch the exact version a repo pins in packageManager.
+# COREPACK_HOME must sit outside /home/paseo or the volume masks the shims.
+ENV COREPACK_HOME=/usr/local/share/corepack     PNPM_HOME=/usr/local/share/pnpm     BUN_INSTALL=/usr/local/share/bun
+RUN set -eux;     mkdir -p "$COREPACK_HOME" "$PNPM_HOME" "$BUN_INSTALL";     corepack enable --install-directory /usr/local/bin;     corepack prepare pnpm@latest --activate;     corepack prepare yarn@stable --activate;     # bun: single static binary, no Node needed at runtime
+    curl -fsSL https://bun.sh/install | bash;     ln -sf "$BUN_INSTALL/bin/bun" /usr/local/bin/bun;     ln -sf "$BUN_INSTALL/bin/bunx" /usr/local/bin/bunx 2>/dev/null || true;     # Everything above is shared state a non-root user must be able to write
+    # (pnpm keeps its global store here, corepack caches downloaded versions).
+    chown -R paseo:paseo "$COREPACK_HOME" "$PNPM_HOME" "$BUN_INSTALL";     chmod -R a+rX "$COREPACK_HOME" "$PNPM_HOME" "$BUN_INSTALL";     pnpm --version; yarn --version; bun --version
+
 # ── uv — fast Python package/venv manager ───────────────────────────────────
 RUN curl -fsSL https://astral.sh/uv/install.sh | \
       env UV_INSTALL_DIR=/usr/local/bin INSTALLER_NO_MODIFY_PATH=1 sh \
@@ -211,11 +221,25 @@ RUN set -eux; \
 ARG EXTRA_NPM_PACKAGES=""
 RUN if [ -n "$EXTRA_NPM_PACKAGES" ]; then npm install -g $EXTRA_NPM_PACKAGES; fi
 
+# Every `npm install -g` above ran as root and left a root-owned cache at
+# /home/paseo/.npm — inside the VOLUME path. The runtime chown only fixes the
+# mountpoint, so `paseo` then cannot npm-install anything ("EACCES ... please
+# run sudo chown -R 1000:1000 /home/paseo/.npm"). Drop it; npm recreates the
+# cache as the right user on first use.
+RUN rm -rf /home/paseo/.npm /root/.npm || true
+
 # paseo must be able to read every redirected install, and needs sudo for
 # ad-hoc package installs from inside an agent session.
 RUN chmod -R a+rX "$AGENT_HOME" \
     && echo 'paseo ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/90-paseo \
-    && chmod 0440 /etc/sudoers.d/90-paseo
+    && chmod 0440 /etc/sudoers.d/90-paseo \
+    # `npm install -g` writes to /usr/local, which is root-owned. Give paseo
+    # ownership of just the npm-managed subdirs so an agent can install a tool
+    # mid-session without sudo (and so `make add-agent` works as paseo).
+    # These are OUTSIDE the /home/paseo volume, so they persist across restarts
+    # but reset on rebuild — which is what EXTRA_NPM_PACKAGES is for.
+    && mkdir -p /usr/local/lib/node_modules /usr/local/bin /usr/local/share/man \
+    && chown -R paseo:paseo /usr/local/lib/node_modules
 
 # ── VS Code CLI (dev tunnels) ───────────────────────────────────────────────
 # `code tunnel` exposes this container as a remote in vscode.dev — a full
