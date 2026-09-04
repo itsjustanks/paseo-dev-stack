@@ -24,7 +24,7 @@ jobs:
           # SC2016: single-quoted $VARS inside docker exec are intentional —
           #         they must expand INSIDE the container, not on the host.
           shellcheck -e SC1091,SC2016 -S warning \
-            install.sh scripts/*.sh scripts/pds docker/paseo/*.sh
+            install.sh scripts/*.sh scripts/pds docker/paseo/*.sh tests/*.sh
 
       - name: python syntax + lint
         run: |
@@ -51,6 +51,14 @@ jobs:
               docker/paseo/entrypoint-devstack.sh || true)
           [ "$n" -le 1 ] || { echo "stream bridge started $n times"; exit 1; }
           echo "entrypoint has no duplicated blocks"
+
+      - name: new-daemon safety guards
+        run: |
+          # new-daemon.sh OOM-killed a 31GB host on 2026-09-04 by starting an
+          # uncapped second container beside a main one holding a 28GB cgroup.
+          # These cases assert the guards that stop a repeat: refuse on budget,
+          # never build, always inherit a cap.
+          bash tests/test-new-daemon.sh
 
       - name: compose config is valid
         run: |

@@ -155,7 +155,7 @@ services:
     hostname: ${PASEO_NAME_4:-paseo-4}
     ports:
       - "127.0.0.1:${PASEO_PORT_4:-6770}:6767"
-      - "127.0.0.1:${AGENT_BROWSER_STREAM_PORT_4:-9225}:${AGENT_BROWSER_STREAM_BRIDGE_PORT:-9224}"
+      - "127.0.0.1:${AGENT_BROWSER_STREAM_PORT_4:-9227}:${AGENT_BROWSER_STREAM_BRIDGE_PORT:-9224}"
     volumes:
       - paseo-home-4:/home/paseo
       - ${WORKSPACE_DIR_4:-./workspace-4}:/workspace
@@ -172,7 +172,7 @@ services:
     hostname: ${PASEO_NAME_5:-paseo-5}
     ports:
       - "127.0.0.1:${PASEO_PORT_5:-6771}:6767"
-      - "127.0.0.1:${AGENT_BROWSER_STREAM_PORT_5:-9226}:${AGENT_BROWSER_STREAM_BRIDGE_PORT:-9224}"
+      - "127.0.0.1:${AGENT_BROWSER_STREAM_PORT_5:-9228}:${AGENT_BROWSER_STREAM_BRIDGE_PORT:-9224}"
     volumes:
       - paseo-home-5:/home/paseo
       - ${WORKSPACE_DIR_5:-./workspace-5}:/workspace
@@ -189,7 +189,7 @@ services:
     hostname: ${PASEO_NAME_6:-paseo-6}
     ports:
       - "127.0.0.1:${PASEO_PORT_6:-6772}:6767"
-      - "127.0.0.1:${AGENT_BROWSER_STREAM_PORT_6:-9227}:${AGENT_BROWSER_STREAM_BRIDGE_PORT:-9224}"
+      - "127.0.0.1:${AGENT_BROWSER_STREAM_PORT_6:-9229}:${AGENT_BROWSER_STREAM_BRIDGE_PORT:-9224}"
     volumes:
       - paseo-home-6:/home/paseo
       - ${WORKSPACE_DIR_6:-./workspace-6}:/workspace
@@ -206,7 +206,7 @@ services:
     hostname: ${PASEO_NAME_7:-paseo-7}
     ports:
       - "127.0.0.1:${PASEO_PORT_7:-6773}:6767"
-      - "127.0.0.1:${AGENT_BROWSER_STREAM_PORT_7:-9228}:${AGENT_BROWSER_STREAM_BRIDGE_PORT:-9224}"
+      - "127.0.0.1:${AGENT_BROWSER_STREAM_PORT_7:-9230}:${AGENT_BROWSER_STREAM_BRIDGE_PORT:-9224}"
     volumes:
       - paseo-home-7:/home/paseo
       - ${WORKSPACE_DIR_7:-./workspace-7}:/workspace
@@ -223,7 +223,7 @@ services:
     hostname: ${PASEO_NAME_8:-paseo-8}
     ports:
       - "127.0.0.1:${PASEO_PORT_8:-6774}:6767"
-      - "127.0.0.1:${AGENT_BROWSER_STREAM_PORT_8:-9229}:${AGENT_BROWSER_STREAM_BRIDGE_PORT:-9224}"
+      - "127.0.0.1:${AGENT_BROWSER_STREAM_PORT_8:-9231}:${AGENT_BROWSER_STREAM_BRIDGE_PORT:-9224}"
     volumes:
       - paseo-home-8:/home/paseo
       - ${WORKSPACE_DIR_8:-./workspace-8}:/workspace
@@ -240,7 +240,7 @@ services:
     hostname: ${PASEO_NAME_9:-paseo-9}
     ports:
       - "127.0.0.1:${PASEO_PORT_9:-6775}:6767"
-      - "127.0.0.1:${AGENT_BROWSER_STREAM_PORT_9:-9230}:${AGENT_BROWSER_STREAM_BRIDGE_PORT:-9224}"
+      - "127.0.0.1:${AGENT_BROWSER_STREAM_PORT_9:-9232}:${AGENT_BROWSER_STREAM_BRIDGE_PORT:-9224}"
     volumes:
       - paseo-home-9:/home/paseo
       - ${WORKSPACE_DIR_9:-./workspace-9}:/workspace
