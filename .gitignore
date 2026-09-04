@@ -1,6 +1,7 @@
 .env
 .env.local
 workspace/
+global-packages/
 workspace-2/
 workspace-3/
 config/cloudflared/*.json

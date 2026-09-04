@@ -123,6 +123,14 @@ if [ -n "$stray" ]; then
   note "  those live in the volume and are NOT visible on the host — prefer /workspace/<name>"
 else ok "all projects are under /workspace (visible on the host)"; fi
 
+echo "── global packages ──"
+# `npm i -g` must land on the bind mount, or it is wiped by the next rebuild.
+pfx="$($DC exec -T --user paseo paseo bash -lc 'npm config get prefix' 2>/dev/null | tr -d '\r')"
+case "$pfx" in
+  /opt/npm-global) ok "npm prefix=$pfx (bind-mounted; global installs survive rebuilds)" ;;
+  *) bad "npm prefix=$pfx — global installs will be LOST on the next rebuild" ;;
+esac
+
 echo "── shell environment ──"
 # /home/paseo is a volume, so /etc/skel's dotfiles are shadowed. Without them a
 # Paseo terminal opens with a bare "$" and no history/colours.

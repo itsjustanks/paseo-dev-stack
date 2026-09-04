@@ -72,7 +72,7 @@ if [ "$OS" = "Darwin" ]; then
     tmp="$(mktemp)"; sed "s|^PASEO_PASSWORD=.*|PASEO_PASSWORD=${pw}|" .env > "$tmp" && mv "$tmp" .env
     log "generated PASEO_PASSWORD=${pw}"
   fi
-  mkdir -p workspace
+  mkdir -p workspace global-packages
 
   if [ "${DEVSTACK_NO_START:-0}" = "1" ]; then log "install only (DEVSTACK_NO_START=1)"; exit 0; fi
   log "building and starting (first build takes a few minutes)"
@@ -128,7 +128,10 @@ if [ "$STAGE" != "$DEVSTACK_DIR" ]; then
   cp -r "$STAGE" "$DEVSTACK_DIR"
 fi
 chown -R "$DEVSTACK_USER:$DEVSTACK_USER" "$DEVSTACK_DIR"
-sudo -u "$DEVSTACK_USER" mkdir -p "$DEVSTACK_DIR/workspace"
+# Both must exist and be owned by the service user BEFORE compose runs:
+# Docker creates a missing bind-mount source as root, and npm then cannot write
+# to it ("EACCES") — the failure looks like a broken image, not a missing dir.
+sudo -u "$DEVSTACK_USER" mkdir -p "$DEVSTACK_DIR/workspace" "$DEVSTACK_DIR/global-packages"
 
 # ─── .env ───────────────────────────────────────────────────────────────────
 cd "$DEVSTACK_DIR"

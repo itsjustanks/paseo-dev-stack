@@ -15,9 +15,12 @@
 # real image path) and symlinks the binary into /usr/local/bin, which is how the
 # built-in CLIs are handled.
 #
-# Installs into a running container are EPHEMERAL — a rebuild starts from the
-# image again. Pass --persist to also record the package in .env
-# (EXTRA_NPM_PACKAGES) so the next build bakes it in.
+# npm/pnpm global installs go to /opt/npm-global, which is bind-mounted from the
+# host — so they SURVIVE restarts AND rebuilds with no extra flag.
+#
+# --persist additionally records the package in .env (EXTRA_NPM_PACKAGES) so it
+# is baked into the IMAGE. Use it when you want the tool present on a fresh
+# machine built from this repo, not just on this one.
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 cd "$(dirname "$0")/.." || exit 1

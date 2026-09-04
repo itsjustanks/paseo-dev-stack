@@ -52,6 +52,13 @@ services:
     volumes:
       # Daemon state, agent configs, ALL credentials, auto-memory.
       - paseo-home:/home/paseo
+      # Runtime global installs (`npm i -g`, `pnpm add -g`) land here and so
+      # SURVIVE rebuilds. It is a separate PREFIX, not a mount over
+      # /usr/local/lib/node_modules — mounting over that would mask the image's
+      # own packages (the paseo CLI, agent-browser) exactly the way the
+      # /home/paseo volume masks $HOME. A plain host directory, so you can see
+      # and back up what is installed.
+      - ${GLOBAL_PACKAGES_DIR:-./global-packages}:/opt/npm-global
       # Your code. Bind mount so it's editable from the host too.
       - ${WORKSPACE_DIR:-./workspace}:/workspace
       # Seed config + memory, copied in on FIRST BOOT ONLY (never overwrites).

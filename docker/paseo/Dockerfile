@@ -249,13 +249,16 @@ RUN chmod -R a+rX "$AGENT_HOME" \
     # These are OUTSIDE the /home/paseo volume, so they persist across restarts
     # but reset on rebuild — which is what EXTRA_NPM_PACKAGES is for.
     && mkdir -p /usr/local/lib/node_modules /usr/local/bin /usr/local/share/man/man1 \
-    # npm -g needs BOTH: the package dir to write into, and /usr/local/bin to
-    # symlink the entrypoint into (it fails with EACCES on the symlink
-    # otherwise). Group-write with the paseo group is enough — no need to hand
-    # root's bin directory away entirely.
+    # npm -g needs BOTH the package dir to write into and a bin dir to symlink
+    # the entrypoint into (it fails with EACCES on the symlink otherwise).
     && chown -R paseo:paseo /usr/local/lib/node_modules \
     && chgrp -R paseo /usr/local/bin /usr/local/share/man/man1 \
-    && chmod -R g+w /usr/local/bin /usr/local/share/man/man1
+    && chmod -R g+w /usr/local/bin /usr/local/share/man/man1 \
+    # Runtime global installs go to a SEPARATE prefix that is bind-mounted from
+    # the host, so `npm i -g` survives a rebuild. It cannot be a mount over
+    # /usr/local/lib/node_modules — that would mask the image's own packages.
+    && mkdir -p /opt/npm-global/lib /opt/npm-global/bin \
+    && chown -R paseo:paseo /opt/npm-global
 
 # ── VS Code CLI (dev tunnels) ───────────────────────────────────────────────
 # `code tunnel` exposes this container as a remote in vscode.dev — a full
@@ -304,7 +307,10 @@ RUN chmod +x /usr/local/bin/entrypoint-devstack.sh /usr/local/bin/stream-bridge.
 
 # PNPM_HOME/bin must be on PATH or `pnpm add -g` refuses to run
 # ("configured global bin directory is not in PATH").
-ENV PATH="/usr/local/bin:/usr/local/share/pnpm/bin:/usr/local/share/bun/bin:/home/paseo/.local/bin:${PATH}" \
+# /opt/npm-global/bin comes FIRST so a user's own newer copy of a tool wins over
+# the image's, which is what someone running `npm i -g` expects.
+ENV NPM_CONFIG_PREFIX=/opt/npm-global \
+    PATH="/opt/npm-global/bin:/usr/local/bin:/usr/local/share/pnpm/bin:/usr/local/share/bun/bin:/home/paseo/.local/bin:${PATH}" \
     npm_config_update_notifier=false \
     DO_NOT_TRACK=1 \
     PASEO_PLUGIN_SOURCE=/opt/paseo-plugins
