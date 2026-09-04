@@ -36,6 +36,22 @@ jobs:
           # a TUI tab could look fine and die when you opened it.
           ruff check --select=E9,F63,F7,F82,F821 scripts/ docker/
 
+      - name: no duplicated blocks in the entrypoint
+        run: |
+          # A section header appearing twice means a block was inserted against
+          # an anchor that matched more than once. That shipped once already and
+          # launched a second stream-bridge on every boot, plus resurrected an
+          # older copy-only plugin block that never registered anything.
+          dup=$(grep -o '^# ── [^─]*' docker/paseo/entrypoint-devstack.sh \
+                | sort | uniq -d)
+          if [ -n "$dup" ]; then
+            echo "duplicated sections in entrypoint-devstack.sh:"; echo "$dup"; exit 1
+          fi
+          n=$(grep -c 'nohup python3 /usr/local/bin/stream-bridge.py' \
+              docker/paseo/entrypoint-devstack.sh || true)
+          [ "$n" -le 1 ] || { echo "stream bridge started $n times"; exit 1; }
+          echo "entrypoint has no duplicated blocks"
+
       - name: compose config is valid
         run: |
           cp .env.example .env
