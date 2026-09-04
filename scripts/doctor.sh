@@ -203,11 +203,27 @@ if command -v systemctl >/dev/null 2>&1; then
     # A guard that aborts every pass exits 0 and looks healthy. Its log is the
     # only place that shows it. Empty/absent log = nothing needed reaping.
     lg="/home/$gu/.paseo/$t.log"
-    # Only the RECENT tail matters. Grepping the whole log means a guard that
-    # has since recovered stays red forever on historical failures -- which is
-    # the same lying-monitor problem in reverse.
-    if [ -s "$lg" ] && [ "$(tail -20 "$lg" 2>/dev/null | grep -vc 'scan failed\|no roots to scan')" = 0 ]; then
-      bad "$t: every recent pass aborted — it is not doing any work"
+    # A SUCCESSFUL pass writes nothing (these guards log only when they act),
+    # so "no new lines" is the healthy case and the log alone can never clear.
+    # Compare the last failure against the last run: a failure older than the
+    # most recent run means the guard has since completed a clean pass.
+    # `date -d` is GNU-only. This whole block is already inside a systemd
+    # branch, so it is Linux-only anyway -- but say so rather than silently
+    # degrading to always-green, which is the failure this check exists to
+    # catch.
+    if ! date -d "2026-01-01" +%s >/dev/null 2>&1; then
+      note "$t.timer enabled (cannot verify its passes: GNU date required)"
+      continue
+    fi
+    lastrun="$(systemctl show -p ExecMainExitTimestamp --value "$t.service" 2>/dev/null)"
+    lastrun_s="$(date -d "$lastrun" +%s 2>/dev/null || echo 0)"
+    lastfail_s=0
+    if [ -s "$lg" ]; then
+      lf="$(grep 'scan failed\|no roots to scan' "$lg" 2>/dev/null | tail -1 | cut -c1-19)"
+      [ -n "$lf" ] && lastfail_s="$(date -d "$lf" +%s 2>/dev/null || echo 0)"
+    fi
+    if [ "$lastfail_s" -gt 0 ] && [ "$lastfail_s" -ge "$lastrun_s" ]; then
+      bad "$t: its most recent pass aborted — it is not doing any work"
       note "last: $(tail -1 "$lg" 2>/dev/null)"
       note "if the host was starved, re-run it once it is idle: sudo systemctl start $t.service"
     else
