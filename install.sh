@@ -34,7 +34,14 @@ log()  { printf '\033[1;36m[devstack]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[warn]\033[0m %s\n' "$*"; }
 die()  { printf '\033[1;31m[fail]\033[0m %s\n' "$*" >&2; exit 1; }
 
-gen_pw() { LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 24; }
+# `tr < /dev/urandom | head -c 24` makes head exit first, so tr dies of SIGPIPE
+# (141). With `set -o pipefail` that is a FATAL pipeline failure, and the script
+# aborts here — silently skipping the credentials file. It is nondeterministic:
+# tr sometimes finishes writing its buffer before head closes the pipe, which is
+# why this survived earlier runs. Read a fixed block instead: no pipe, no race.
+gen_pw() {
+  LC_ALL=C tr -dc 'A-Za-z0-9' < <(head -c 4096 /dev/urandom) | cut -c1-24
+}
 
 OS="$(uname -s)"
 
