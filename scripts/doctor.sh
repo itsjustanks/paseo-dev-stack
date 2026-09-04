@@ -32,9 +32,26 @@ for t in "claude --version" "codex --version" "kimi --version" \
 done
 
 echo "── persistence (survives the /home/paseo volume mount) ──"
-for p in /usr/local/bin/claude /usr/local/bin/codex /usr/local/bin/cursor-agent; do
-  $DC exec -T --user paseo paseo test -e "$p" 2>/dev/null \
-    && ok "$p present" || bad "$p MISSING — volume masking bug"
+# `test -e` is NOT enough: it passes on a DANGLING symlink, which is exactly
+# how Claude Code broke — its installer linked into /home/paseo/.local/share,
+# the volume masked the target, and the link still "existed". Require an
+# executable REAL file, and reject any link whose target is inside the volume.
+for p in /usr/local/bin/claude /usr/local/bin/codex /usr/local/bin/cursor-agent \
+         /usr/local/bin/kimi; do
+  res="$($DC exec -T --user paseo paseo bash -lc '
+    p="'"$p"'"
+    [ -e "$p" ] || { echo missing; exit; }
+    t="$(readlink -f "$p" 2>/dev/null)"
+    [ -x "$t" ] || { echo dangling; exit; }
+    case "$t" in /home/paseo/*) echo "involume:$t"; exit ;; esac
+    echo ok' 2>/dev/null | tr -d '\r')"
+  case "$res" in
+    ok)         ok "$p" ;;
+    missing)    bad "$p MISSING — volume masking bug" ;;
+    dangling)   bad "$p is a DANGLING symlink — its target was masked by the volume" ;;
+    involume:*) bad "$p points into the volume (${res#involume:}) — it will vanish on the next 'up'" ;;
+    *)          bad "$p — could not verify" ;;
+  esac
 done
 
 echo "── 9router ──"
@@ -47,9 +64,19 @@ grep -q '^NINEROUTER_KEY=.\+' .env 2>/dev/null \
   || note "NINEROUTER_KEY empty — agents will use their own OAuth login"
 
 echo "── auto-memory ──"
-n="$($DC exec -T --user paseo paseo bash -lc \
-  'ls -1 /home/paseo/.claude/memory/*.md 2>/dev/null | wc -l' 2>/dev/null | tr -d ' ')"
-[ "${n:-0}" -gt 0 ] && ok "$n memory file(s)" || note "memory store empty (make memory-push)"
+# Counting files only proves our own cp worked. What matters is that Claude
+# Code is POINTED at that directory — otherwise the memories are inert.
+mem="$($DC exec -T --user paseo paseo bash -lc '
+  n=$(ls -1 /home/paseo/.claude/memory/*.md 2>/dev/null | wc -l | tr -d " ")
+  d=$(sed -n "s/.*\"autoMemoryDirectory\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" \
+      /home/paseo/.claude/settings.json 2>/dev/null | head -1)
+  echo "$n|$d"' 2>/dev/null | tr -d '\r')"
+n="${mem%%|*}"; dir="${mem##*|}"
+if [ "${n:-0}" -gt 0 ] && [ "$dir" = /home/paseo/.claude/memory ]; then
+  ok "$n memory file(s), and settings.json points at them"
+elif [ "${n:-0}" -gt 0 ]; then
+  bad "$n memory file(s) but autoMemoryDirectory is '${dir:-unset}' — they will not load"
+else note "memory store empty (make memory-push)"; fi
 
 echo "── headless browser ──"
 if $DC exec -T --user paseo paseo bash -lc \
