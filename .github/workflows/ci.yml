@@ -1,0 +1,250 @@
+# Validate the stack on every PR and push to main.
+#
+# Jobs are split so a shell typo does not hide a Dockerfile problem, and the
+# expensive image build only runs after the cheap linters pass.
+
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  shell:
+    name: shellcheck
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: ShellCheck
+        uses: ludeeus/action-shellcheck@2.0.0
+        with:
+          severity: warning
+          check_together: "yes"
+          format: gcc
+          # agent-env.sh is a /etc/profile.d fragment: it is sourced, never
+          # executed, so it has no shebang and shellcheck errors with SC1008.
+          # It is covered by the `shell directive` step below instead.
+          ignore_names: agent-env.sh
+          ignore_paths: workspace
+
+      - name: Lint sourced profile fragments
+        # These have no shebang; tell shellcheck what they are explicitly.
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          rc=0
+          while IFS= read -r f; do
+            echo "::group::$f"
+            shellcheck -s bash -S warning -x "$f" || rc=1
+            echo "::endgroup::"
+          done < <(find docker config -name 'agent-env.sh' -o -name '*.profile' 2>/dev/null)
+          exit $rc
+
+      - name: Executable bits
+        # An install script that lands without +x fails for the user with a
+        # confusing "permission denied" long after CI was green.
+        run: |
+          rc=0
+          for f in install.sh scripts/*.sh scripts/guard/*.sh; do
+            [ -x "$f" ] || { echo "::error file=$f::not executable (chmod +x $f)"; rc=1; }
+          done
+          exit $rc
+
+  python:
+    name: python lint
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"   # bookworm/noble ship 3.11/3.12; do not lint against 3.13-only syntax
+
+      - name: Syntax check
+        run: python -m compileall -q scripts/guard
+
+      - name: Ruff
+        # ruff is a single static binary; installing it via pip is faster and
+        # more predictable here than a marketplace action.
+        run: |
+          pip install --quiet ruff
+          # E9 = syntax/runtime errors, F = pyflakes (undefined names, unused
+          # imports). Deliberately narrow: these are ops scripts, not a library,
+          # and a full style gate would be noise.
+          ruff check --select E9,F,B --target-version py311 scripts/guard
+          ruff format --check --diff scripts/guard || \
+            echo "::warning::ruff format would reformat these files (not failing the build)"
+
+  compose:
+    name: compose config
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Validate compose (default profile)
+        # docker-compose.yml uses ${PASEO_PASSWORD:?...}, so `config` fails hard
+        # without an env file. Validate against .env.example — which also proves
+        # .env.example still covers every required variable.
+        run: |
+          cp .env.example .env
+          docker compose --env-file .env config --quiet
+          echo "default profile ok"
+
+      - name: Validate every profile
+        run: |
+          for p in tunnel quick-tunnel; do
+            echo "::group::profile $p"
+            docker compose --env-file .env --profile "$p" config --quiet
+            echo "::endgroup::"
+          done
+
+      - name: Assert nothing binds 0.0.0.0
+        # The security model is "only the tunnel is public". A published port
+        # without a 127.0.0.1 prefix bypasses UFW via docker's iptables rules,
+        # which would silently expose Paseo to the internet.
+        run: |
+          bad=$(docker compose --env-file .env config --format json \
+                | jq -r '.services | to_entries[]
+                         | .value.ports // [] | .[]
+                         | select((.host_ip // "0.0.0.0") != "127.0.0.1")
+                         | tostring')
+          if [ -n "$bad" ]; then
+            echo "::error::port published outside 127.0.0.1: $bad"
+            exit 1
+          fi
+          echo "all published ports bound to 127.0.0.1"
+
+      - name: Assert .env.example has no real secrets
+        run: |
+          if grep -nEi '^(GH_TOKEN|SUPABASE_ACCESS_TOKEN|CURSOR_API_KEY|TUNNEL_TOKEN|NINEROUTER_KEY)=.+' .env.example; then
+            echo "::error::.env.example must ship these keys EMPTY"
+            exit 1
+          fi
+
+  hadolint:
+    name: hadolint
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: hadolint/hadolint-action@v3.5.0
+        with:
+          dockerfile: docker/paseo/Dockerfile
+          failure-threshold: warning
+          # DL3007  base image is :latest — deliberate, we track Paseo upstream.
+          # DL3008  apt versions unpinned — bookworm point releases move; pinning
+          #         every lib would break the build weekly for no security gain.
+          # DL3016  npm versions unpinned — agent CLIs must be current by design.
+          # DL3002  last USER is root — the base entrypoint drops to `paseo` via
+          #         gosu at runtime; root is required to seed config first.
+          ignore: DL3007,DL3008,DL3016,DL3002
+
+  build:
+    name: build image (${{ matrix.platform }})
+    needs: [shell, python, compose, hadolint]
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Normalise platform name
+        run: echo "PLATFORM_PAIR=${platform//\//-}" >> "$GITHUB_ENV"
+        env:
+          platform: ${{ matrix.platform }}
+
+      - name: Free up runner disk
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+                      /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
+          df -h /
+
+      - uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build (no push)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: docker/paseo/Dockerfile
+          platforms: ${{ matrix.platform }}
+          push: false
+          load: true                       # keep it locally so we can smoke-test it
+          tags: paseo-dev-stack/agents:ci
+          # Read the release cache too: a PR that does not touch the Dockerfile
+          # then reuses the last released layers instead of reinstalling Chrome.
+          cache-from: |
+            type=gha,scope=ci-${{ env.PLATFORM_PAIR }}
+            type=gha,scope=release-${{ env.PLATFORM_PAIR }}
+          cache-to: type=gha,mode=max,scope=ci-${{ env.PLATFORM_PAIR }}
+
+      - name: Smoke-test the image
+        # A green `docker build` only proves the layers ran. This proves the
+        # binaries are actually reachable at RUNTIME — which is the exact thing
+        # the HOME=/opt/agent-home redirect exists to guarantee, and the exact
+        # thing that silently regresses when an installer changes its layout.
+        run: |
+          rc=0
+          for cmd in "claude --version" "codex --version" "kimi --version" \
+                     "cursor-agent --version" "supabase --version" "gh --version" \
+                     "agent-browser --version" "node --version" "python3 --version" \
+                     "uv --version" "code --version"; do
+            if out=$(docker run --rm --entrypoint bash paseo-dev-stack/agents:ci \
+                       -lc "$cmd" 2>&1); then
+              printf '  ok   %-16s %s\n' "${cmd%% *}" "$(head -1 <<<"$out")"
+            else
+              printf '  FAIL %-16s %s\n' "${cmd%% *}" "$(head -1 <<<"$out")"
+              rc=1
+            fi
+          done
+          exit $rc
+
+      - name: Assert agent binaries survive the /home/paseo volume
+        # The base image declares VOLUME /home/paseo. Anything an installer left
+        # in $HOME is MASKED the moment a real volume mounts. Re-run the checks
+        # with an empty volume mounted there: this is the regression that broke
+        # the image before and is invisible to a plain `docker run`.
+        run: |
+          docker volume create ci-home >/dev/null
+          rc=0
+          for cmd in "claude --version" "codex --version" "cursor-agent --version" \
+                     "agent-browser --version"; do
+            if docker run --rm -v ci-home:/home/paseo --entrypoint bash \
+                 paseo-dev-stack/agents:ci -lc "$cmd" >/dev/null 2>&1; then
+              printf '  ok   %s survives the volume\n' "${cmd%% *}"
+            else
+              printf '::error::%s is MASKED by the /home/paseo volume\n' "${cmd%% *}"
+              rc=1
+            fi
+          done
+          docker volume rm ci-home >/dev/null
+          exit $rc
+
+      - name: Assert Chrome is present and executable
+        run: |
+          docker run --rm --entrypoint bash paseo-dev-stack/agents:ci -lc '
+            p=$(cat /opt/chrome-path) || exit 1
+            [ -x "$p" ] || { echo "chrome not executable at $p"; exit 1; }
+            echo "chrome: $p"
+            "$p" --version || true
+          '
+
+      - name: Image size
+        run: |
+          size=$(docker image inspect paseo-dev-stack/agents:ci --format '{{.Size}}')
+          echo "### Image size (${{ matrix.platform }}): $((size/1024/1024)) MB" >> "$GITHUB_STEP_SUMMARY"

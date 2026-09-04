@@ -1,0 +1,82 @@
+# Create the GitHub Release for a v* tag.
+#
+# Runs independently of release-image.yml (both trigger on the same tag) so a
+# transient registry failure does not block the release notes, and a bad release
+# body does not block the image. The release body links to the image by tag.
+
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write   # required to create the release
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0   # generate_release_notes needs the tag history
+
+      - name: Verify tag is on main
+        # A tag pushed from a stale local branch would ship code that was never
+        # reviewed. Cheap guard, catches a real mistake.
+        run: |
+          git fetch --no-tags origin main
+          if git merge-base --is-ancestor "${{ github.sha }}" origin/main; then
+            echo "tag is an ancestor of main - ok"
+          else
+            echo "::error::tag ${{ github.ref_name }} is not on main"
+            exit 1
+          fi
+
+      - name: Compose release body
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          cat > "$RUNNER_TEMP/body.md" <<EOF
+          ## Install
+
+          \`\`\`bash
+          curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/${TAG}/install.sh | bash
+          \`\`\`
+
+          ## Upgrade an existing install
+
+          \`\`\`bash
+          cd paseo-dev-stack
+          git fetch --tags && git checkout ${TAG}
+          make pull && make up
+          \`\`\`
+
+          Credentials and agent state live in the \`paseo-home\` volume and survive the upgrade.
+
+          ## Prebuilt image
+
+          \`\`\`
+          ghcr.io/itsjustanks/paseo-dev-stack:${TAG#v}
+          \`\`\`
+
+          Published for \`linux/amd64\` and \`linux/arm64\`. Set \`PASEO_IMAGE\` in \`.env\` to
+          use it instead of building locally.
+
+          ---
+          EOF
+
+      - name: Create release
+        uses: softprops/action-gh-release@v3
+        with:
+          # generate_release_notes appends GitHub's auto-generated changelog
+          # (merged PRs + new contributors) BELOW body_path.
+          body_path: ${{ runner.temp }}/body.md
+          generate_release_notes: true
+          draft: false
+          # Anything with a dash is a prerelease: v1.2.0-rc.1, v1.2.0-beta.2.
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          make_latest: ${{ !contains(github.ref_name, '-') }}
+          fail_on_unmatched_files: true

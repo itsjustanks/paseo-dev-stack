@@ -3,12 +3,16 @@ SHELL := /bin/bash
 DC    := docker compose
 .DEFAULT_GOAL := help
 
-.PHONY: help up down restart build rebuild logs ps shell root doctor \
+.PHONY: tui help up down restart build rebuild logs ps shell root doctor \
         auth-claude auth-codex auth-kimi auth-cursor auth-all \
         code-tunnel code-tunnel-bg code-tunnel-url \
         tunnel quick-tunnel tunnel-url router memory-push memory-pull \
-        guards guards-status guards-dry mem \
+        guards guards-status guards-dry mem autotune autotune-write \
+        agents add-agent router-status router-key router-on router-off \
         browser-open browser-stream browser-view browser-test clean nuke
+
+tui: ## Interactive control panel (start here)
+	@python3 scripts/tui.py
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -110,6 +114,33 @@ code-tunnel-url: ## Print the vscode.dev URL for the running tunnel
 	@$(DC) exec -T --user paseo paseo bash -lc \
 	  'grep -oE "https://vscode.dev/tunnel/[^ ]+" /home/paseo/.vscode-tunnel.log 2>/dev/null | tail -1' \
 	  || echo "not started yet — make code-tunnel-bg"
+
+# ── Agents & routing ────────────────────────────────────────────────────────
+agents: ## List agent CLIs installed in the container
+	@./scripts/add-agent.sh --list
+
+add-agent: ## Install another agent CLI (make add-agent M=npm P=opencode-ai [PERSIST=1])
+	@test -n "$(M)" -a -n "$(P)" || { echo "usage: make add-agent M=npm|curl P=<package-or-url> [PERSIST=1]"; exit 1; }
+	@./scripts/add-agent.sh $(M) "$(P)" $(if $(PERSIST),--persist,)
+
+router-status: ## Show which CLIs are routed through 9router
+	@./scripts/router-connect.sh status
+
+router-key: ## Mint a 9router API key and save it to .env
+	@./scripts/router-connect.sh key
+
+router-on: ## Route claude + codex through 9router
+	@./scripts/router-connect.sh on
+
+router-off: ## Unroute; each CLI uses its own login
+	@./scripts/router-connect.sh off
+
+# ── Memory sizing ───────────────────────────────────────────────────────────
+autotune: ## Show RAM-based sizing for this host
+	@./scripts/autotune-memory.sh
+
+autotune-write: ## Apply RAM-based sizing to .env
+	@./scripts/autotune-memory.sh --write
 
 router: ## Open the 9router dashboard URL
 	@echo "http://127.0.0.1:$${NINEROUTER_PORT:-20128}/dashboard"

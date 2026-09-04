@@ -1,0 +1,198 @@
+# Build the agent image and publish it to GHCR on a v* tag.
+#
+# Multi-arch is done with NATIVE runners (ubuntu-24.04 + ubuntu-24.04-arm), not
+# QEMU. This image installs five agent CLIs from curl|bash installers and does a
+# `npm install -g`; under QEMU every one of those runs interpreted, and the
+# amd64+arm64 build goes from ~10min to well over an hour (and frequently times
+# out in node's own install scripts). Native arm64 runners are free for public
+# repos, so there is no reason to emulate.
+#
+# Each platform is built and pushed BY DIGEST only (no tag), then a final job
+# stitches the digests into one multi-arch manifest under the real tags. This is
+# the only correct way to split a multi-arch build across runners.
+
+name: release-image
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Image tag to publish (e.g. v0.3.1). Manual runs only."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io
+  # Lowercase: GHCR rejects uppercase path components, and github.repository
+  # preserves the owner's casing.
+  IMAGE_NAME: ghcr.io/itsjustanks/paseo-dev-stack
+
+jobs:
+  build:
+    name: build ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      # `linux/amd64` is not usable as a cache scope or artifact name (the slash).
+      - name: Normalise platform name
+        run: echo "PLATFORM_PAIR=${platform//\//-}" >> "$GITHUB_ENV"
+        env:
+          platform: ${{ matrix.platform }}
+
+      - name: Free up runner disk
+        # The image is ~4GB (Chrome + 5 CLIs + build-essential). The hosted
+        # runner ships ~25GB used by toolchains this build never touches.
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+                      /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
+          df -h /
+
+      - uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          # org.opencontainers.image.source is what links the GHCR package back
+          # to this repo. Without it the package page has no README and cannot
+          # inherit repo access.
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.description=Paseo dev stack agent image (Paseo + claude/codex/kimi/cursor + agent-browser)
+            org.opencontainers.image.licenses=MIT
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: docker/paseo/Dockerfile
+          platforms: ${{ matrix.platform }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # No tags here on purpose: each runner pushes an untagged manifest and
+          # the merge job assembles the tagged multi-arch index.
+          outputs: type=image,name=${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
+          # Scope per platform, or the two runners fight over one cache key and
+          # each invalidates the other.
+          cache-from: type=gha,scope=release-${{ env.PLATFORM_PAIR }}
+          cache-to: type=gha,mode=max,scope=release-${{ env.PLATFORM_PAIR }}
+          provenance: false   # provenance is attached to the final index instead
+
+      - name: Export digest
+        run: |
+          mkdir -p "${{ runner.temp }}/digests"
+          digest="${{ steps.build.outputs.digest }}"
+          touch "${{ runner.temp }}/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v7
+        with:
+          name: digests-${{ env.PLATFORM_PAIR }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    name: merge manifest
+    runs-on: ubuntu-24.04
+    needs: [build]
+    permissions:
+      contents: read
+      packages: write
+      id-token: write        # required by attest-build-provenance (Sigstore OIDC)
+      attestations: write    # required to write the attestation back to GitHub
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v8
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}},enable=${{ !startsWith(github.ref, 'refs/tags/v0.') }}
+            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
+            type=raw,value=${{ inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' }}
+          # {{major}} is disabled for 0.x: a floating `:0` tag across 0.x is
+          # meaningless because 0.x minors are allowed to break.
+          # `latest` is skipped for prereleases (v1.2.0-rc.1 contains a dash).
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create and push manifest list
+        working-directory: ${{ runner.temp }}/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf '${{ env.IMAGE_NAME }}@sha256:%s ' *)
+
+      - name: Resolve pushed digest
+        id: digest
+        run: |
+          d=$(docker buildx imagetools inspect \
+                "${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}" \
+                --format '{{json .Manifest}}' | jq -r .digest)
+          echo "digest=$d" >> "$GITHUB_OUTPUT"
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-name: ${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.digest.outputs.digest }}
+          push-to-registry: true
+
+      - name: Summary
+        run: |
+          {
+            echo "### Image published"
+            echo
+            echo '```'
+            echo "docker pull ${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}"
+            echo '```'
+            echo
+            echo "Digest: \`${{ steps.digest.outputs.digest }}\`"
+            echo
+            echo "Tags:"
+            jq -r '.tags[] | "- `" + . + "`"' <<< "$DOCKER_METADATA_OUTPUT_JSON"
+          } >> "$GITHUB_STEP_SUMMARY"

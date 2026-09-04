@@ -744,3 +744,1054 @@ class Streamer:
                 except Exception:
                     continue
         self.done = True
+
+
+# ══ terminal handoff: interactive TTY programs ═══════════════════════════════
+
+def handoff(cmd, banner=None, cwd=ROOT):
+    """
+    Give the terminal to a full-screen interactive program (claude, codex, a
+    shell, `code tunnel`), then take it back cleanly.
+
+    THIS IS THE FIDDLY PART. The sequence, and why each step exists:
+
+      1. curses.def_prog_mode()  — snapshot the CURRENT tty settings (cbreak,
+         noecho, keypad, ...) into curses' "program mode" so they can be
+         restored verbatim later.
+      2. curses.endwin()         — restore the tty to "shell mode": cooked
+         input, echo on, cursor visible, and the terminal taken OUT of the
+         alternate screen buffer. Without this the child inherits raw/noecho
+         and a login prompt shows nothing as you type.
+      3. curses.flushinp()       — drop keystrokes already buffered by the TUI
+         so a stray keypress does not get eaten by the child's first prompt.
+      4. run the child with **inherited stdio** — no PIPEs. The child must have
+         the real tty as fd 0/1/2 or it will not detect a terminal and will
+         refuse to render (or will refuse to prompt for a login code).
+      5. stdscr.refresh()        — curses internally does reset_prog_mode() and
+         repaints from scratch. `endwin()` is documented as "temporary"
+         precisely so a plain refresh resumes; calling initscr() again would
+         leak a whole new screen. Verified: curses.isendwin() is False after.
+
+    SIGINT: while the child owns the terminal, ctrl-C must reach the CHILD, not
+    us. start_new_session=False keeps it in our foreground process group, and we
+    ignore SIGINT for the duration so the TUI is never killed by a ctrl-C that
+    was aimed at the login flow.
+    """
+    curses.def_prog_mode()
+    curses.endwin()
+    curses.flushinp()
+
+    old_sigint = signal.getsignal(signal.SIGINT)
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    rc = None
+    try:
+        os.write(1, b"\x1b[2J\x1b[H")        # clear the shell screen we returned to
+        if banner:
+            sys.stdout.write(banner.rstrip() + "\n\n")
+            sys.stdout.flush()
+        try:
+            # stdin/stdout/stderr deliberately NOT redirected: the child needs
+            # the real tty. This blocks until it exits -- that is the point.
+            rc = subprocess.call(cmd, cwd=cwd)
+        except FileNotFoundError as exc:
+            sys.stdout.write(f"\ncould not run: {exc}\n")
+            rc = -1
+        sys.stdout.write(f"\n[exit {rc}]  press Enter to return to the panel ")
+        sys.stdout.flush()
+        try:
+            sys.stdin.readline()
+        except (KeyboardInterrupt, EOFError, OSError):
+            pass
+    finally:
+        signal.signal(signal.SIGINT, old_sigint)
+    return rc
+
+
+# ══ UI ═══════════════════════════════════════════════════════════════════════
+
+SPIN = "|/-\\"
+C_DIM, C_OK, C_WARN, C_BAD, C_HEAD, C_KEY, C_SEL = range(1, 8)
+
+
+def init_colors():
+    try:
+        curses.start_color()
+        curses.use_default_colors()          # keep the user's transparent bg
+    except curses.error:
+        return False
+    if not curses.has_colors():
+        return False
+    for pair, fg in ((C_DIM, curses.COLOR_WHITE), (C_OK, curses.COLOR_GREEN),
+                     (C_WARN, curses.COLOR_YELLOW), (C_BAD, curses.COLOR_RED),
+                     (C_HEAD, curses.COLOR_CYAN), (C_KEY, curses.COLOR_MAGENTA),
+                     (C_SEL, curses.COLOR_BLUE)):
+        try:
+            curses.init_pair(pair, fg, -1)
+        except curses.error:
+            pass
+    return True
+
+
+class UI:
+    TABS = ["status", "memory", "auth", "tunnels", "logs", "doctor", "guards"]
+
+    def __init__(self, stdscr):
+        self.scr = stdscr
+        self.tab = 0
+        self.sel = 0                 # row cursor inside the active tab
+        self.frame = 0
+        self.stream = None
+        self.color = init_colors()
+        self.msg = ""
+        self.msg_at = 0.0
+        self.confirm = None          # (prompt, callback)
+
+    # -- drawing primitives ---------------------------------------------------
+    def attr(self, pair=0, bold=False, dim=False, rev=False):
+        a = curses.color_pair(pair) if (self.color and pair) else 0
+        if bold:
+            a |= curses.A_BOLD
+        if dim:
+            a |= curses.A_DIM
+        if rev:
+            a |= curses.A_REVERSE
+        return a
+
+    def put(self, y, x, text, pair=0, bold=False, dim=False, rev=False):
+        """
+        Clipped write. curses raises on the last cell of the last line, and
+        on any out-of-range coordinate -- during a resize both happen, so every
+        write is guarded rather than the screen being redrawn defensively.
+        """
+        h, w = self.scr.getmaxyx()
+        if y < 0 or y >= h or x >= w:
+            return
+        text = clean(str(text))
+        if x < 0:
+            text, x = text[-x:], 0
+        room = w - x - 1
+        if room <= 0:
+            return
+        try:
+            self.scr.addnstr(y, x, text, room, self.attr(pair, bold, dim, rev))
+        except curses.error:
+            pass
+
+    def hline(self, y, ch="─", pair=C_DIM):
+        h, w = self.scr.getmaxyx()
+        if 0 <= y < h:
+            self.put(y, 0, ch * (w - 1), pair, dim=True)
+
+    def flash(self, text):
+        self.msg, self.msg_at = text, time.time()
+        ST.note(text)
+
+    # -- chrome ---------------------------------------------------------------
+    def header(self):
+        h, w = self.scr.getmaxyx()
+        with ST.lock:
+            ok, dmsg, busy = ST.docker_ok, ST.docker_msg, set(ST.busy)
+            has_env = ST.env.get("__HAS_ENV__") == "1"
+        spin = SPIN[self.frame % 4] if busy else " "
+        self.put(0, 0, f" {APP} ", C_HEAD, bold=True, rev=True)
+        dot = "●" if ok else ("○" if ok is False else "◌")
+        self.put(0, len(APP) + 3, f"{dot} {dmsg}", C_OK if ok else C_BAD, bold=True)
+        self.put(0, w - 14, f"{spin} {'busy' if busy else 'idle'}", C_DIM, dim=True)
+
+        if not has_env:
+            self.put(1, 0, " no .env — copy .env.example to .env and set PASEO_PASSWORD "
+                           "(compose will refuse to start without it) ", C_WARN, bold=True, rev=True)
+
+        y = 2 if not has_env else 1
+        x = 0
+        for i, name in enumerate(self.TABS):
+            label = f" {i+1}·{name} "
+            self.put(y, x, label, C_HEAD if i == self.tab else C_DIM,
+                     bold=(i == self.tab), rev=(i == self.tab), dim=(i != self.tab))
+            x += len(label) + 1
+        self.hline(y + 1)
+        return y + 2
+
+    def footer(self):
+        h, w = self.scr.getmaxyx()
+        self.hline(h - 2)
+        if self.confirm:
+            self.put(h - 1, 0, f" {self.confirm[0]}  [y/N] ", C_WARN, bold=True, rev=True)
+            return
+        if self.msg and time.time() - self.msg_at < 6:
+            self.put(h - 1, 0, f" {self.msg} ", C_KEY, bold=True)
+            return
+        keys = {
+            0: "u up  d down  r restart  B rebuild  l logs  s shell  ↑↓ pick",
+            1: "R refresh  K kill dev server  g guards",
+            2: "Enter log in  A log in to all  ↑↓ pick",
+            3: "q quick  n named  v vscode  c copy url  x stop tunnels",
+            4: "↑↓ scroll  PgUp/PgDn  f follow  x stop  s pick service",
+            5: "Enter run doctor  x stop",
+            6: "Enter dry-run  i install (linux)",
+        }.get(self.tab, "")
+        self.put(h - 1, 0, f" {keys}   ·   Tab switch  ? help  Q quit ", C_DIM, dim=True)
+
+    # -- tabs -----------------------------------------------------------------
+    def tab_status(self, y):
+        h, w = self.scr.getmaxyx()
+        with ST.lock:
+            svcs, ports, cstats = dict(ST.services), dict(ST.ports), dict(ST.cstats)
+        age = ST.age("services")
+        stale = "  (stale)" if age and age > 12 else ""
+        self.put(y, 2, f"SERVICES{stale}", C_HEAD, bold=True)
+        y += 1
+        self.put(y, 2, f"{'':2}{'service':<20}{'state':<12}{'uptime':<10}"
+                       f"{'restarts':<10}{'port':<14}{'memory':<18}", C_DIM, dim=True)
+        y += 1
+        for i, s in enumerate(SERVICES):
+            row = svcs.get(s.service, {})
+            state = row.get("state") or "absent"
+            pair, mark = {
+                "running": (C_OK, "●"), "restarting": (C_WARN, "◐"),
+                "created": (C_WARN, "○"), "paused": (C_WARN, "‖"),
+                "exited": (C_BAD, "✗"), "dead": (C_BAD, "✗"),
+            }.get(state, (C_DIM, "·"))
+            if state == "absent":
+                state = "not created"
+            up = human_dur(row["uptime"]) if row.get("uptime") else "—"
+            rst = row.get("restarts", 0)
+            pinfo = "—"
+            if s.service in ports:
+                p, alive = ports[s.service]
+                pinfo = f"{p} {'open' if alive else 'closed'}"
+            mem = "—"
+            cs = cstats.get(row.get("container") or s.container)
+            if cs:
+                mem = f"{cs[0].replace(' ', '')} ({cs[1]})"
+            sel = (i == self.sel)
+            self.put(y, 0, "▸" if sel else " ", C_KEY, bold=True)
+            self.put(y, 2, mark, pair, bold=True)
+            self.put(y, 4, f"{s.service:<20}", C_HEAD if sel else 0, bold=sel)
+            self.put(y, 24, f"{state:<12}", pair)
+            self.put(y, 36, f"{up:<10}", C_DIM, dim=True)
+            self.put(y, 46, f"{rst:<10}", C_BAD if rst > 3 else C_DIM,
+                     bold=rst > 3, dim=rst <= 3)
+            self.put(y, 56, f"{pinfo:<14}",
+                     C_OK if pinfo.endswith("open") else (C_DIM if pinfo == "—" else C_WARN))
+            self.put(y, 70, mem, C_DIM, dim=True)
+            y += 1
+            if sel and y < h - 4:
+                extra = s.blurb + (f"   [profile: {s.profile}]" if s.profile else "")
+                self.put(y, 6, extra, C_DIM, dim=True)
+                y += 1
+        y += 1
+        self.hline(y); y += 1
+        self.put(y, 2, "ENDPOINTS", C_HEAD, bold=True); y += 1
+        pp = ST.port("PASEO_PORT", 6767)
+        np_ = ST.port("NINEROUTER_PORT", 20128)
+        bp = ST.port("AGENT_BROWSER_STREAM_PORT", 9223)
+        for label, url, alive in (
+            ("Paseo UI", f"http://127.0.0.1:{pp}", ports.get("paseo", (0, False))[1]),
+            ("9router", f"http://127.0.0.1:{np_}/dashboard", ports.get("9router", (0, False))[1]),
+            ("browser stream", f"ws://127.0.0.1:{bp}", ports.get("agent-browser", (0, False))[1]),
+        ):
+            self.put(y, 4, f"{'●' if alive else '○'} {label:<16}", C_OK if alive else C_DIM,
+                     bold=alive, dim=not alive)
+            self.put(y, 26, url, C_KEY if alive else C_DIM, dim=not alive)
+            y += 1
+        return y
+
+    def tab_memory(self, y):
+        h, w = self.scr.getmaxyx()
+        with ST.lock:
+            hm, cstats, devs = dict(ST.hostmem), dict(ST.cstats), list(ST.devservers)
+        self.put(y, 2, "HOST MEMORY", C_HEAD, bold=True); y += 1
+        if hm.get("err"):
+            self.put(y, 4, f"unavailable: {hm['err']}", C_WARN); y += 1
+        elif hm.get("total"):
+            total, avail = hm["total"], hm.get("avail", 0)
+            used = total - avail
+            frac = used / total if total else 0
+            barw = max(10, min(46, w - 34))
+            filled = int(barw * frac)
+            pair = C_OK if frac < 0.75 else (C_WARN if frac < 0.9 else C_BAD)
+            self.put(y, 4, "[", C_DIM, dim=True)
+            self.put(y, 5, "█" * filled, pair, bold=True)
+            self.put(y, 5 + filled, "░" * (barw - filled), C_DIM, dim=True)
+            self.put(y, 5 + barw, "]", C_DIM, dim=True)
+            self.put(y, 8 + barw, f"{human_bytes(used)} / {human_bytes(total)} used"
+                                  f"   {human_bytes(avail)} available", pair)
+            y += 1
+            if hm.get("swap_total"):
+                sw_used = hm["swap_total"] - hm.get("swap_free", 0)
+                self.put(y, 4, f"swap {human_bytes(sw_used)} / {human_bytes(hm['swap_total'])}",
+                         C_WARN if sw_used > 0.5 * hm["swap_total"] else C_DIM, dim=True)
+                y += 1
+            self.put(y, 4, f"source: {hm.get('src', '?')}", C_DIM, dim=True); y += 1
+        else:
+            self.put(y, 4, "reading...", C_DIM, dim=True); y += 1
+
+        y += 1
+        with ST.lock:
+            limit_raw = ST.env.get("PASEO_MEM_LIMIT", "0")
+        # NOTE: built with concatenation, not a multi-line f-string expression.
+        # A newline INSIDE the braces of an f-string is PEP 701 and needs
+        # Python 3.12+; the container is Debian 12 (3.11), so it must not appear.
+        uncapped = limit_raw in ("", "0")
+        warn = "  — unlimited, one runaway next-server can take the host down"
+        self.put(y, 2, "CONTAINERS", C_HEAD, bold=True)
+        self.put(y, 16, "(PASEO_MEM_LIMIT=" + (limit_raw or "0") +
+                        (warn if uncapped else "") + ")",
+                 C_WARN if uncapped else C_DIM, dim=not uncapped)
+        y += 1
+        if not cstats:
+            self.put(y, 4, "no running containers (or docker stats unavailable)", C_DIM, dim=True)
+            y += 1
+        for name, (usage, pct, cpu) in sorted(cstats.items()):
+            try:
+                pv = float(pct.rstrip("%"))
+            except ValueError:
+                pv = 0.0
+            pair = C_OK if pv < 70 else (C_WARN if pv < 90 else C_BAD)
+            self.put(y, 4, f"{name:<32}", C_DIM)
+            self.put(y, 36, f"{usage:<24}", pair)
+            self.put(y, 60, f"{pct:>7} mem", pair, bold=pv >= 90)
+            self.put(y, 72, f"{cpu:>8} cpu", C_DIM, dim=True)
+            y += 1
+
+        y += 1
+        self.put(y, 2, "NEXT DEV SERVERS", C_HEAD, bold=True)
+        self.put(y, 20, "(these are what actually eat the box — K to kill the selected one)",
+                 C_DIM, dim=True)
+        y += 1
+        if not devs:
+            self.put(y, 4, "none running", C_DIM, dim=True); y += 1
+        for i, d in enumerate(devs):
+            if y >= h - 3:
+                self.put(y, 4, f"... {len(devs) - i} more", C_DIM, dim=True)
+                break
+            sel = (i == self.sel)
+            pair = C_OK if d["gb"] < 4 else (C_WARN if d["gb"] < 10 else C_BAD)
+            self.put(y, 2, "▸" if sel else " ", C_KEY, bold=True)
+            self.put(y, 4, f"pid {d['pid']:<8}", C_DIM)
+            self.put(y, 16, f"{d['gb']:>6.1f}GB", pair, bold=d["gb"] >= 10)
+            self.put(y, 26, f"{d['hours']:>6.1f}h", C_WARN if d["hours"] > 2 else C_DIM,
+                     dim=d["hours"] <= 2)
+            self.put(y, 34, f"[{d['where']}]", C_DIM, dim=True)
+            self.put(y, 46, d["cmd"], C_HEAD if sel else 0, dim=not sel)
+            y += 1
+        return y
+
+    def tab_auth(self, y):
+        h, w = self.scr.getmaxyx()
+        with ST.lock:
+            auth = dict(ST.auth)
+            paseo_state = ST.services.get("paseo", {}).get("state")
+        self.put(y, 2, "AGENT CLI LOGINS", C_HEAD, bold=True)
+        self.put(y, 22, "credentials live on the paseo-home volume — they survive "
+                        "restart, rebuild and image updates", C_DIM, dim=True)
+        y += 2
+        if paseo_state != "running":
+            self.put(y, 4, "the paseo container is not running — start it on the status tab "
+                           "(u) before logging in", C_WARN, bold=True)
+            y += 2
+        for i, (key, label, binname, _f, _jf, _jk, cmd) in enumerate(AUTH_TOOLS):
+            st = auth.get(key, "?")
+            mark, pair, text = {
+                "ok": ("●", C_OK, "authenticated"),
+                "no": ("○", C_WARN, "NOT logged in"),
+                "--": ("·", C_DIM, "CLI not installed in the image"),
+            }.get(st, ("?", C_DIM, "unknown (probe could not read the container)"))
+            sel = (i == self.sel)
+            self.put(y, 2, "▸" if sel else " ", C_KEY, bold=True)
+            self.put(y, 4, mark, pair, bold=True)
+            self.put(y, 6, f"{label:<16}", C_HEAD if sel else 0, bold=sel)
+            self.put(y, 24, f"{text:<44}", pair)
+            self.put(y, 68, f"$ {cmd}", C_DIM, dim=True)
+            y += 1
+        y += 1
+        self.hline(y); y += 1
+        self.put(y, 2, "Enter", C_KEY, bold=True)
+        self.put(y, 8, "hand the terminal to the selected CLI's interactive login. The panel "
+                       "suspends,", C_DIM, dim=True); y += 1
+        self.put(y, 8, "the CLI gets the real tty (it needs one for the device-code flow), and "
+                       "the panel", C_DIM, dim=True); y += 1
+        self.put(y, 8, "comes back when you exit it.", C_DIM, dim=True); y += 1
+        self.put(y, 2, "A", C_KEY, bold=True)
+        self.put(y, 8, "walk every CLI in turn.   ", C_DIM, dim=True)
+        self.put(y, 34, "s", C_KEY, bold=True)
+        self.put(y, 36, "shell into the container as paseo.", C_DIM, dim=True)
+        return y + 1
+
+    def tab_tunnels(self, y):
+        h, w = self.scr.getmaxyx()
+        with ST.lock:
+            t = dict(ST.tunnels)
+            svcs = dict(ST.services)
+            has_token = bool((ST.env.get("TUNNEL_TOKEN") or "").strip())
+            hostnames = ST.env.get("PASEO_HOSTNAMES", "")
+        self.put(y, 2, "PUBLIC ACCESS", C_HEAD, bold=True); y += 2
+        rows = [
+            ("quick tunnel", "cloudflared-quick", t["quick"],
+             "throwaway *.trycloudflare.com — NO AUTH in front of it, dev only", "q"),
+            ("named tunnel", "cloudflared", t["named"],
+             "needs TUNNEL_TOKEN in .env" if not has_token else "token present in .env", "n"),
+            ("vscode tunnel", None, t["vscode"],
+             "runs inside the container; survives restarts once logged in", "v"),
+        ]
+        for i, (label, svc, url, blurb, key) in enumerate(rows):
+            running = (svcs.get(svc, {}).get("state") == "running") if svc else bool(url)
+            sel = (i == self.sel)
+            self.put(y, 2, "▸" if sel else " ", C_KEY, bold=True)
+            self.put(y, 4, "●" if running else "○", C_OK if running else C_DIM, bold=running)
+            self.put(y, 6, f"{label:<16}", C_HEAD if sel else 0, bold=sel)
+            self.put(y, 24, f"[{key}]", C_KEY, bold=True)
+            self.put(y, 30, url or ("starting..." if running else "not running"),
+                     C_OK if url else C_DIM, bold=bool(url), dim=not url)
+            y += 1
+            self.put(y, 6, blurb, C_DIM, dim=True)
+            y += 2
+        self.hline(y); y += 1
+        self.put(y, 2, "PASEO_HOSTNAMES", C_HEAD, bold=True)
+        self.put(y, 20, hostnames or "(empty)", C_DIM if hostnames else C_WARN,
+                 dim=bool(hostnames))
+        y += 1
+        self.put(y, 4, "Paseo rejects unknown Host headers. Starting a quick tunnel here adds "
+                       "its hostname", C_DIM, dim=True); y += 1
+        self.put(y, 4, "to .env and restarts paseo automatically — same as `make quick-tunnel`.",
+                 C_DIM, dim=True); y += 2
+        bp = ST.port("AGENT_BROWSER_STREAM_PORT", 9223)
+        self.put(y, 2, "AGENT BROWSER STREAM", C_HEAD, bold=True); y += 1
+        self.put(y, 4, f"ws://127.0.0.1:{bp}", C_KEY, bold=True)
+        self.put(y, 4 + 26, "  press c to print it for copying", C_DIM, dim=True); y += 1
+        self.put(y, 4, f"remote:  ssh -N -L {bp}:127.0.0.1:{bp} <user>@<this-host>",
+                 C_DIM, dim=True)
+        return y + 1
+
+    def tab_stream(self, y, title, empty_hint):
+        """Shared renderer for the logs and doctor panes."""
+        h, w = self.scr.getmaxyx()
+        avail = h - y - 2
+        if not self.stream:
+            self.put(y, 2, title, C_HEAD, bold=True); y += 2
+            for line in empty_hint:
+                self.put(y, 4, line, C_DIM, dim=True); y += 1
+            return y
+        lines = self.stream.snapshot()
+        status = ("running" if not self.stream.done
+                  else f"finished (exit {self.stream.rc})")
+        pair = (C_WARN if not self.stream.done
+                else (C_OK if self.stream.rc == 0 else C_BAD))
+        self.put(y, 2, self.stream.title, C_HEAD, bold=True)
+        self.put(y, 2 + len(self.stream.title) + 2, f"— {status}", pair, bold=True)
+        follow = self.stream.scroll == 0
+        self.put(y, w - 26, "FOLLOW" if follow else "PAUSED (f to follow)",
+                 C_OK if follow else C_WARN, bold=True)
+        y += 1
+        self.hline(y); y += 1
+        total = len(lines)
+        end = total - self.stream.scroll
+        start = max(0, end - avail)
+        for line in lines[start:max(start, end)]:
+            lp = 0
+            low = line.lower()
+            if "error" in low or "fail" in low or "✗" in line:
+                lp = C_BAD
+            elif "warn" in low or "·" in line:
+                lp = C_WARN
+            elif "✓" in line or "ok" == low.strip():
+                lp = C_OK
+            self.put(y, 1, line, lp)
+            y += 1
+        return y
+
+    def tab_guards(self, y):
+        h, w = self.scr.getmaxyx()
+        with ST.lock:
+            g = dict(ST.guards)
+        self.put(y, 2, "MEMORY / DISK GUARDS", C_HEAD, bold=True)
+        self.put(y, 26, "reap runaway Next dev servers and trim caches", C_DIM, dim=True)
+        y += 2
+        for line in g.get("lines", []):
+            pair = C_OK if "devserver-guard.timer" in line or "cache-trim.timer" in line else C_WARN
+            self.put(y, 4, line[:w - 6], pair)
+            y += 1
+        y += 1
+        self.put(y, 2, "RECENT REAPS", C_HEAD, bold=True); y += 1
+        for line in g.get("log", [])[-10:]:
+            self.put(y, 4, line, C_DIM, dim=True); y += 1
+        y += 1
+        self.hline(y); y += 1
+        if self.stream:
+            return self.tab_stream(y, "", [])
+        self.put(y, 2, "Enter", C_KEY, bold=True)
+        self.put(y, 8, "dry-run both guards here — shows exactly what they WOULD kill/delete, "
+                       "kills nothing", C_DIM, dim=True); y += 1
+        if not IS_MAC:
+            self.put(y, 2, "i", C_KEY, bold=True)
+            self.put(y, 8, "install the systemd timers (runs sudo — hands the terminal over)",
+                     C_DIM, dim=True)
+        else:
+            self.put(y, 4, "install is Linux-only; on macOS use the dry-run to inspect.",
+                     C_DIM, dim=True)
+        return y + 1
+
+    def draw_help(self):
+        h, w = self.scr.getmaxyx()
+        box = [
+            "",
+            "  devstack control panel",
+            "",
+            "  Tab / 1-7      switch tab            ↑ ↓ / j k    move the row cursor",
+            "  R              force-refresh everything",
+            "  Q or ctrl-C    quit (background containers keep running)",
+            "",
+            "  status   u start (build if needed)   d stop the stack",
+            "           r restart selected          B rebuild image, no cache",
+            "           l logs for selected         s shell into paseo as `paseo`",
+            "           o open the selected URL in a browser",
+            "",
+            "  memory   K kill the selected dev server (parent supervisor first)",
+            "",
+            "  auth     Enter log in to the selected CLI    A every CLI in turn",
+            "",
+            "  tunnels  q quick   n named   v vscode   x stop cloudflared",
+            "           c print URLs plainly so the terminal can copy them",
+            "",
+            "  logs     s pick a service   f follow/pause   PgUp/PgDn scroll   x stop",
+            "",
+            "  Interactive programs (logins, shells, vscode tunnel) take the whole",
+            "  terminal: the panel suspends, they get the real tty, and the panel",
+            "  returns when they exit.",
+            "",
+            "  press any key to close",
+            "",
+        ]
+        bw = min(w - 4, max(len(l) for l in box) + 4)
+        bh = min(h - 2, len(box) + 2)
+        top, left = max(0, (h - bh) // 2), max(0, (w - bw) // 2)
+        for i in range(bh):
+            self.put(top + i, left, " " * bw, C_SEL, rev=True)
+        for i, line in enumerate(box[:bh - 1]):
+            self.put(top + 1 + i, left + 1, line.ljust(bw - 2), C_SEL, rev=True,
+                     bold=line.strip().startswith("devstack"))
+
+    # -- main draw ------------------------------------------------------------
+    def draw(self):
+        self.scr.erase()
+        y = self.header()
+        name = self.TABS[self.tab]
+        try:
+            if name == "status":
+                self.tab_status(y)
+            elif name == "memory":
+                self.tab_memory(y)
+            elif name == "auth":
+                self.tab_auth(y)
+            elif name == "tunnels":
+                self.tab_tunnels(y)
+            elif name == "logs":
+                self.tab_stream(y, "LOGS", [
+                    "no stream running.",
+                    "press s to pick a service, or l on the status tab.",
+                ])
+            elif name == "doctor":
+                self.tab_stream(y, "DOCTOR", [
+                    "press Enter to run scripts/doctor.sh.",
+                    "it verifies containers, every agent CLI, 9router reachability,",
+                    "auto-memory, the headless browser, plugins and the guards.",
+                ])
+            elif name == "guards":
+                self.tab_guards(y)
+        except curses.error:
+            pass                      # a resize mid-draw; the next frame is fine
+        self.footer()
+        if self.confirm and self.confirm[0].startswith("__help__"):
+            self.draw_help()
+        self.scr.noutrefresh()
+        curses.doupdate()
+
+
+# ══ actions ══════════════════════════════════════════════════════════════════
+
+class Actions:
+    def __init__(self, ui):
+        self.ui = ui
+
+    # -- helpers --------------------------------------------------------------
+    def compose(self, *args):
+        with ST.lock:
+            cc = ST.compose_cmd
+        return (list(cc) + list(args)) if cc else None
+
+    def stream(self, args, title):
+        cmd = self.compose(*args)
+        if not cmd:
+            self.ui.flash("docker compose is not available")
+            return
+        if self.ui.stream:
+            self.ui.stream.stop()
+        self.ui.stream = Streamer(cmd, title)
+        self.ui.flash(f"running: {title}")
+
+    def stream_raw(self, cmd, title, tab=None):
+        if self.ui.stream:
+            self.ui.stream.stop()
+        self.ui.stream = Streamer(cmd, title)
+        if tab is not None:
+            self.ui.tab = tab
+        self.ui.flash(f"running: {title}")
+
+    def interactive(self, args, banner, tab_note=""):
+        cmd = self.compose(*args)
+        if not cmd:
+            self.ui.flash("docker compose is not available")
+            return
+        handoff(cmd, banner)
+        refresh_all()
+        self.ui.flash(f"returned from {tab_note or ' '.join(args[-2:])}")
+
+    def selected_service(self):
+        return SERVICES[max(0, min(self.ui.sel, len(SERVICES) - 1))]
+
+    # -- env editing (quick tunnel needs it) ----------------------------------
+    @staticmethod
+    def add_hostname(host):
+        """
+        Append a hostname to PASEO_HOSTNAMES in .env. Written via a temp file +
+        os.replace so a crash mid-write cannot leave a truncated .env -- losing
+        PASEO_PASSWORD would make the whole stack refuse to start.
+        """
+        path = os.path.join(ROOT, ".env")
+        if not os.path.exists(path):
+            return False, "no .env"
+        try:
+            with open(path, errors="replace") as fh:
+                lines = fh.read().splitlines()
+        except OSError as exc:
+            return False, str(exc)
+        out, seen = [], False
+        for line in lines:
+            if line.startswith("PASEO_HOSTNAMES="):
+                seen = True
+                cur = line.split("=", 1)[1].strip()
+                hosts = [h for h in (x.strip() for x in cur.split(",")) if h]
+                if host in hosts:
+                    return True, "already allowed"
+                hosts.append(host)
+                out.append("PASEO_HOSTNAMES=" + ",".join(hosts))
+            else:
+                out.append(line)
+        if not seen:
+            out.append(f"PASEO_HOSTNAMES={host}")
+        tmp = path + ".tmp"
+        try:
+            with open(tmp, "w") as fh:
+                fh.write("\n".join(out) + "\n")
+            os.replace(tmp, path)
+        except OSError as exc:
+            return False, str(exc)
+        with ST.lock:
+            ST.env = load_env()
+        return True, "added"
+
+    def start_quick_tunnel(self):
+        """
+        Same contract as `make quick-tunnel`, but off the UI thread: bring the
+        profile up, poll the logs for the URL, allowlist the hostname, restart
+        paseo so it accepts that Host header.
+        """
+        def worker():
+            ST.note("quick tunnel: starting cloudflared-quick")
+            rc, out = dc("--profile", "quick-tunnel", "up", "-d", "cloudflared-quick", timeout=120)
+            if rc != 0:
+                ST.note(f"quick tunnel failed to start: {out.strip()[-200:]}")
+                return
+            url = ""
+            for _ in range(30):
+                rc, out = dc("logs", "--tail", "300", "cloudflared-quick", timeout=20)
+                if rc == 0:
+                    urls = re.findall(r"https://[a-z0-9-]+\.trycloudflare\.com", out)
+                    if urls:
+                        url = urls[-1]
+                        break
+                time.sleep(2)
+            if not url:
+                ST.note("quick tunnel: no URL yet — check logs for cloudflared-quick")
+                return
+            ok, how = self.add_hostname(url[len("https://"):])
+            ST.note(f"quick tunnel: {url}  (hostname {how})")
+            if ok and how == "added":
+                ST.note("restarting paseo so it accepts the new Host header")
+                dc("up", "-d", "paseo", timeout=120)
+            refresh_all()
+
+        threading.Thread(target=worker, daemon=True).start()
+        self.ui.flash("starting quick tunnel — the URL appears here when ready")
+
+    def start_named_tunnel(self):
+        with ST.lock:
+            token = (ST.env.get("TUNNEL_TOKEN") or "").strip()
+        if not token:
+            self.ui.flash("TUNNEL_TOKEN is not set in .env — use q for a throwaway tunnel")
+            return
+        self.stream(["--profile", "tunnel", "up", "-d", "cloudflared"], "named tunnel up")
+
+    def stop_tunnels(self):
+        def worker():
+            for prof, svc in (("quick-tunnel", "cloudflared-quick"), ("tunnel", "cloudflared")):
+                dc("--profile", prof, "stop", svc, timeout=60)
+                dc("--profile", prof, "rm", "-f", svc, timeout=60)
+            ST.note("tunnels stopped")
+            refresh_all()
+        threading.Thread(target=worker, daemon=True).start()
+        self.ui.flash("stopping tunnels...")
+
+    def copy_urls(self):
+        """
+        There is no portable clipboard here (a headless droplet has no pbcopy and
+        no X11 for xclip). Instead: try the OS clipboard, and ALWAYS also drop
+        out of curses and print the URLs plainly, so the terminal's own
+        select-and-copy -- which works over ssh, mosh and tmux -- can take them.
+        """
+        with ST.lock:
+            t = dict(ST.tunnels)
+        bp = ST.port("AGENT_BROWSER_STREAM_PORT", 9223)
+        pp = ST.port("PASEO_PORT", 6767)
+        np_ = ST.port("NINEROUTER_PORT", 20128)
+        urls = [
+            ("paseo (local)", f"http://127.0.0.1:{pp}"),
+            ("9router", f"http://127.0.0.1:{np_}/dashboard"),
+            ("browser stream", f"ws://127.0.0.1:{bp}"),
+            ("quick tunnel", t.get("quick") or "(not running)"),
+            ("named tunnel", t.get("named") or "(not running)"),
+            ("vscode tunnel", t.get("vscode") or "(not running)"),
+        ]
+        blob = "\n".join(f"{k:<16} {v}" for k, v in urls)
+        best = t.get("quick") or t.get("vscode") or f"http://127.0.0.1:{pp}"
+        for tool in (["pbcopy"], ["wl-copy"], ["xclip", "-selection", "clipboard"]):
+            if shutil.which(tool[0]):
+                try:
+                    subprocess.run(tool, input=best, text=True, timeout=5)
+                    break
+                except Exception:
+                    pass
+        handoff(["true"], banner=blob + "\n\nselect with the mouse to copy.")
+
+    def open_url(self, url):
+        opener = "open" if IS_MAC else "xdg-open"
+        if shutil.which(opener):
+            sh([opener, url], timeout=5)
+            self.ui.flash(f"opened {url}")
+        else:
+            self.ui.flash(f"no browser opener on this host — {url}")
+
+    def kill_devserver(self):
+        with ST.lock:
+            devs = list(ST.devservers)
+        if not devs:
+            self.ui.flash("no dev servers running")
+            return
+        d = devs[max(0, min(self.ui.sel, len(devs) - 1))]
+
+        def do_kill():
+            # Kill the PARENT supervisor's group: `next dev` restarts
+            # `next-server` when it dies, so killing only the child loops
+            # forever (see scripts/guard/devserver-guard.py).
+            if d["where"] == "host":
+                rc, out = sh(["bash", "-lc",
+                              f"kill -TERM -- -$(ps -o pgid= {d['pid']} | tr -d ' ') "
+                              f"2>/dev/null || kill -TERM {d['pid']}"], timeout=10)
+            else:
+                rc, out = dc("exec", "-T", "--user", "paseo", "paseo", "bash", "-lc",
+                             f"kill -TERM -- -$(ps -o pgid= {d['pid']} | tr -d ' ') "
+                             f"2>/dev/null || kill -TERM {d['pid']}", timeout=15)
+            ST.note(f"killed dev server pid {d['pid']} ({d['where']}) rc={rc}")
+            time.sleep(1.5)
+            refresh_all()
+
+        self.ui.confirm = (f"kill {d['where']} dev server pid {d['pid']} "
+                           f"({d['gb']:.1f}GB)?",
+                           lambda: threading.Thread(target=do_kill, daemon=True).start())
+
+    # -- key dispatch ---------------------------------------------------------
+    def handle(self, key, ch):
+        ui = self.ui
+        tab = ui.TABS[ui.tab]
+
+        # global -------------------------------------------------------------
+        if ch in ("R",):
+            refresh_all()
+            ui.flash("refreshing all probes")
+            return True
+        if ch == "?":
+            ui.confirm = ("__help__", None)
+            return True
+
+        # status ---------------------------------------------------------------
+        if tab == "status":
+            s = self.selected_service()
+            if ch == "u":
+                self.stream(["up", "-d", "--build"], "compose up -d --build")
+                ui.tab = ui.TABS.index("logs")
+                return True
+            if ch == "d":
+                ui.confirm = ("stop the whole stack? (volumes and logins are kept)",
+                              lambda: self.stream(["down"], "compose down"))
+                return True
+            if ch == "r":
+                args = (["--profile", s.profile] if s.profile else []) + ["restart", s.service]
+                self.stream(args, f"restart {s.service}")
+                return True
+            if ch == "B":
+                ui.confirm = ("rebuild the agent image from scratch? (slow, no cache)",
+                              lambda: (self.stream(["build", "--no-cache"], "build --no-cache"),
+                                       setattr(ui, "tab", ui.TABS.index("logs"))))
+                return True
+            if ch == "l":
+                args = (["--profile", s.profile] if s.profile else []) + \
+                       ["logs", "-f", "--tail", "200", s.service]
+                self.stream(args, f"logs: {s.service}")
+                ui.tab = ui.TABS.index("logs")
+                return True
+            if ch == "s":
+                self.interactive(["exec", "--user", "paseo", "paseo", "bash", "-l"],
+                                 "── shell in the paseo container (exit to return) ──",
+                                 "shell")
+                return True
+            if ch == "o":
+                if s.service == "paseo":
+                    self.open_url(f"http://127.0.0.1:{ST.port('PASEO_PORT', 6767)}")
+                elif s.service == "9router":
+                    self.open_url(f"http://127.0.0.1:{ST.port('NINEROUTER_PORT', 20128)}/dashboard")
+                else:
+                    ui.flash("no local URL for that service")
+                return True
+
+        # memory ---------------------------------------------------------------
+        if tab == "memory":
+            if ch == "K":
+                self.kill_devserver()
+                return True
+            if ch == "g":
+                ui.tab = ui.TABS.index("guards")
+                return True
+
+        # auth -----------------------------------------------------------------
+        if tab == "auth":
+            if key in (curses.KEY_ENTER, 10, 13):
+                idx = max(0, min(ui.sel, len(AUTH_TOOLS) - 1))
+                key_, label, _bin, _f, _jf, _jk, cmd = AUTH_TOOLS[idx]
+                self.interactive(
+                    ["exec", "-it", "--user", "paseo", "paseo"] + shlex.split(cmd),
+                    f"── {label} login ──\n"
+                    f"follow the prompts. credentials are written to the paseo-home volume\n"
+                    f"and survive restarts, rebuilds and image updates.\n"
+                    f"quit the CLI (ctrl-C or /exit) to come back to the panel.",
+                    label)
+                return True
+            if ch == "A":
+                for key_, label, _b, _f, _jf, _jk, cmd in AUTH_TOOLS:
+                    self.interactive(
+                        ["exec", "-it", "--user", "paseo", "paseo"] + shlex.split(cmd),
+                        f"── {label} login ──  (exit to move on to the next CLI)", label)
+                refresh_all()
+                return True
+            if ch == "s":
+                self.interactive(["exec", "--user", "paseo", "paseo", "bash", "-l"],
+                                 "── shell in the paseo container ──", "shell")
+                return True
+
+        # tunnels --------------------------------------------------------------
+        if tab == "tunnels":
+            if ch == "q":
+                self.start_quick_tunnel()
+                return True
+            if ch == "n":
+                self.start_named_tunnel()
+                return True
+            if ch == "v":
+                self.interactive(
+                    ["exec", "-it", "--user", "paseo", "paseo", "bash", "-lc",
+                     "code tunnel --accept-server-license-terms --name devstack "
+                     "2>&1 | tee -a /home/paseo/.vscode-tunnel.log"],
+                    "── VS Code dev tunnel ──\n"
+                    "follow the device-login prompt; the vscode.dev URL is printed below it.\n"
+                    "ctrl-C to stop the tunnel and return to the panel.",
+                    "vscode tunnel")
+                return True
+            if ch == "x":
+                self.stop_tunnels()
+                return True
+            if ch == "c":
+                self.copy_urls()
+                return True
+
+        # logs -----------------------------------------------------------------
+        if tab == "logs":
+            if ch == "s":
+                ui.tab = ui.TABS.index("status")
+                ui.flash("pick a service with ↑↓ then press l")
+                return True
+            if ch == "f" and ui.stream:
+                ui.stream.scroll = 0
+                return True
+            if ch == "x" and ui.stream:
+                ui.stream.stop()
+                ui.flash("stopped")
+                return True
+
+        # doctor ---------------------------------------------------------------
+        if tab == "doctor":
+            if key in (curses.KEY_ENTER, 10, 13):
+                self.stream_raw(["bash", os.path.join(ROOT, "scripts", "doctor.sh")],
+                                "doctor")
+                return True
+            if ch == "x" and ui.stream:
+                ui.stream.stop()
+                return True
+
+        # guards ---------------------------------------------------------------
+        if tab == "guards":
+            if key in (curses.KEY_ENTER, 10, 13):
+                script = (
+                    'echo "── devserver-guard (dry run) ──"; '
+                    'DEVSERVER_GUARD_DRY_RUN=1 DEVSERVER_GUARD_STDOUT=1 '
+                    f'python3 {shlex.quote(os.path.join(ROOT, "scripts/guard/devserver-guard.py"))} || true; '
+                    'echo; echo "── cache-trim (dry run) ──"; '
+                    'CACHE_TRIM_DRY_RUN=1 CACHE_TRIM_STDOUT=1 '
+                    f'CACHE_TRIM_ROOTS={shlex.quote(os.path.join(ROOT, "workspace"))} '
+                    f'python3 {shlex.quote(os.path.join(ROOT, "scripts/guard/cache-trim.py"))} || true'
+                )
+                self.stream_raw(["bash", "-lc", script], "guards — dry run")
+                return True
+            if ch == "i" and not IS_MAC:
+                self.interactive_raw()
+                return True
+        return False
+
+    def interactive_raw(self):
+        """Guard install needs sudo, so it needs the real tty for the password."""
+        env_line = (f"sudo DEVSTACK_USER=${{DEVSTACK_USER:-paseo}} "
+                    f"WORKSPACE_ROOT={shlex.quote(os.path.join(ROOT, 'workspace'))} "
+                    f"bash {shlex.quote(os.path.join(ROOT, 'scripts/guard/install-guards.sh'))}")
+        handoff(["bash", "-lc", env_line],
+                "── installing the memory/disk guards (sudo) ──")
+        refresh_all()
+
+
+# ══ main loop ════════════════════════════════════════════════════════════════
+
+def main(stdscr):
+    curses.curs_set(0)
+    stdscr.nodelay(True)          # getch returns -1 instead of blocking, so the
+    stdscr.timeout(200)           # screen keeps refreshing while nothing is typed
+    stdscr.keypad(True)           # decode arrows/PgUp into KEY_* constants
+    ui = UI(stdscr)
+    act = Actions(ui)
+    start_collectors()
+
+    last_draw = 0.0
+    while True:
+        now = time.time()
+        # Redraw at ~5fps, or immediately after a keypress. Cheap: everything
+        # drawn is already in memory, no subprocess is ever touched here.
+        if now - last_draw > 0.2:
+            ui.frame += 1
+            ui.draw()
+            last_draw = now
+
+        try:
+            key = stdscr.getch()
+        except KeyboardInterrupt:
+            break
+        if key == -1:
+            continue
+
+        ch = chr(key) if 32 <= key < 127 else ""
+
+        # a pending confirm/help swallows the next key
+        if ui.confirm:
+            prompt, cb = ui.confirm
+            ui.confirm = None
+            if prompt == "__help__":
+                ui.draw()
+                continue
+            if ch in ("y", "Y") and cb:
+                cb()
+            else:
+                ui.flash("cancelled")
+            ui.draw()
+            continue
+
+        if key == curses.KEY_RESIZE:
+            # curses already resized its internal structures; just repaint.
+            ui.draw()
+            continue
+
+        if ch in ("Q",) or key == 17:                 # Q or ctrl-Q
+            break
+        if key == 9 or ch == "\t":                    # Tab
+            ui.tab = (ui.tab + 1) % len(ui.TABS)
+            ui.sel = 0
+            continue
+        if key == curses.KEY_BTAB:                    # shift-Tab
+            ui.tab = (ui.tab - 1) % len(ui.TABS)
+            ui.sel = 0
+            continue
+        if ch and ch.isdigit() and ch != "0":
+            i = int(ch) - 1
+            if i < len(ui.TABS):
+                ui.tab = i
+                ui.sel = 0
+            continue
+
+        # scrolling in a stream pane, row cursor everywhere else
+        if key in (curses.KEY_UP,) or ch == "k":
+            if ui.TABS[ui.tab] in ("logs", "doctor") and ui.stream:
+                ui.stream.scroll = min(len(ui.stream.lines), ui.stream.scroll + 1)
+            else:
+                ui.sel = max(0, ui.sel - 1)
+            continue
+        if key in (curses.KEY_DOWN,) or ch == "j":
+            if ui.TABS[ui.tab] in ("logs", "doctor") and ui.stream:
+                ui.stream.scroll = max(0, ui.stream.scroll - 1)
+            else:
+                ui.sel += 1
+            continue
+        if key == curses.KEY_PPAGE and ui.stream:
+            ui.stream.scroll = min(len(ui.stream.lines), ui.stream.scroll + 20)
+            continue
+        if key == curses.KEY_NPAGE and ui.stream:
+            ui.stream.scroll = max(0, ui.stream.scroll - 20)
+            continue
+
+        act.handle(key, ch)
+
+    # -- teardown -------------------------------------------------------------
+    _stop.set()
+    if ui.stream:
+        ui.stream.stop()
+
+
+def cli():
+    if not sys.stdout.isatty() or not sys.stdin.isatty():
+        print("devstack-tui needs an interactive terminal.\n"
+              "over ssh: make sure you did not pass -T.\n"
+              "for scripting, use the make targets instead (make help).", file=sys.stderr)
+        return 2
+    if os.environ.get("TERM", "") in ("", "dumb"):
+        print("TERM is unset or 'dumb' — try:  TERM=xterm-256color make tui", file=sys.stderr)
+        return 2
+    try:
+        curses.wrapper(main)          # wrapper restores the terminal even on a
+    except KeyboardInterrupt:         # traceback, which is the whole reason to
+        pass                          # use it rather than initscr() by hand
+    except curses.error as exc:
+        print(f"curses failed: {exc}\n"
+              "the terminal may be too small (needs ~80x20) or TERM may be wrong.",
+              file=sys.stderr)
+        return 1
+    finally:
+        _stop.set()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(cli())
