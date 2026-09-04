@@ -19,6 +19,10 @@ services:
         PDS_VERSION: ${PDS_VERSION:-dev}
     image: paseo-dev-stack/agents:latest
     container_name: paseo-dev-stack-paseo
+    # The daemon reports its HOSTNAME when pairing. Docker defaults that to the
+    # container ID (e.g. "ecb3f8bc1a3d"), which is what you would otherwise see
+    # in the Paseo app — unreadable, and it changes on every recreate. Name it.
+    hostname: ${PASEO_NAME:-paseo-main}
     restart: unless-stopped
     ports:
       - "127.0.0.1:${PASEO_PORT:-6767}:6767"
@@ -107,6 +111,7 @@ services:
       service: paseo
     profiles: [satellites]
     container_name: pds-paseo-2
+    hostname: ${PASEO_NAME_2:-paseo-2}
     ports:
       - "127.0.0.1:${PASEO_PORT_2:-6768}:6767"
       - "127.0.0.1:${AGENT_BROWSER_STREAM_PORT_2:-9225}:${AGENT_BROWSER_STREAM_BRIDGE_PORT:-9224}"
@@ -123,6 +128,7 @@ services:
       service: paseo
     profiles: [satellites]
     container_name: pds-paseo-3
+    hostname: ${PASEO_NAME_3:-paseo-3}
     ports:
       - "127.0.0.1:${PASEO_PORT_3:-6769}:6767"
       - "127.0.0.1:${AGENT_BROWSER_STREAM_PORT_3:-9226}:${AGENT_BROWSER_STREAM_BRIDGE_PORT:-9224}"

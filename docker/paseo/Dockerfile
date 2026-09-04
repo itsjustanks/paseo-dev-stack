@@ -287,9 +287,11 @@ RUN git clone --depth 1 -b "$PLUGIN_9ROUTER_REF" "$PLUGIN_9ROUTER_REPO" \
     && chmod -R a+rX /opt/paseo-plugins
 
 COPY docker/paseo/stream-bridge.py       /usr/local/bin/stream-bridge.py
+COPY docker/paseo/register-plugins.sh    /usr/local/bin/register-plugins.sh
 COPY docker/paseo/entrypoint-devstack.sh /usr/local/bin/entrypoint-devstack.sh
 COPY docker/paseo/agent-env.sh           /etc/profile.d/10-devstack-agents.sh
 RUN chmod +x /usr/local/bin/entrypoint-devstack.sh /usr/local/bin/stream-bridge.py \
+    /usr/local/bin/register-plugins.sh \
     && chmod 0644 /etc/profile.d/10-devstack-agents.sh
 
 # PNPM_HOME/bin must be on PATH or `pnpm add -g` refuses to run

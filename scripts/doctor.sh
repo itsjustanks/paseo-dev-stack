@@ -58,11 +58,31 @@ if $DC exec -T --user paseo paseo bash -lc \
 else bad "agent-browser could not render (check shm_size / seccomp)"; fi
 
 echo "── paseo plugins ──"
+# Copying a plugin directory is NOT registration: the daemon only knows about
+# it after `paseo plugin add`. Ask the daemon, not the filesystem.
 plugs="$($DC exec -T --user paseo paseo bash -lc \
-  'ls -1 /home/paseo/.paseo/plugins 2>/dev/null' 2>/dev/null | tr -d '\r')"
+  'paseo plugin ls 2>/dev/null | awk "NR>1 {print \$1, \$2}"' 2>/dev/null | tr -d '\r')"
 if [ -n "$plugs" ]; then
-  while read -r p; do [ -n "$p" ] && ok "plugin: $p"; done <<< "$plugs"
-else note "no plugins registered"; fi
+  while read -r pid pstate; do
+    [ -n "$pid" ] || continue
+    ok "plugin: $pid ($pstate)"
+  done <<< "$plugs"
+else
+  copied="$($DC exec -T --user paseo paseo bash -lc \
+    'ls -1 /home/paseo/.paseo/plugins 2>/dev/null | head -3' 2>/dev/null | tr -d '\r')"
+  if [ -n "$copied" ]; then
+    bad "plugin files present but NOT registered with the daemon"
+    note "fix: docker compose exec --user paseo paseo /usr/local/bin/register-plugins.sh"
+  else note "no plugins"; fi
+fi
+
+echo "── daemon identity ──"
+hn="$($DC exec -T --user paseo paseo bash -lc 'hostname' 2>/dev/null | tr -d '\r')"
+case "$hn" in
+  [0-9a-f]??????????) bad "daemon name is the container id ($hn) — set PASEO_NAME in .env" ;;
+  "") note "could not read the daemon hostname" ;;
+  *)  ok "daemon name: $hn (shown when pairing)" ;;
+esac
 
 echo "── file ownership ──"
 # Root-owned files inside the repo or the volume are the single most common
