@@ -123,6 +123,16 @@ if [ -n "$stray" ]; then
   note "  those live in the volume and are NOT visible on the host — prefer /workspace/<name>"
 else ok "all projects are under /workspace (visible on the host)"; fi
 
+echo "── shell environment ──"
+# /home/paseo is a volume, so /etc/skel's dotfiles are shadowed. Without them a
+# Paseo terminal opens with a bare "$" and no history/colours.
+if $DC exec -T --user paseo paseo test -f /home/paseo/.bashrc 2>/dev/null; then
+  ok "~/.bashrc present (terminals get a proper prompt)"
+else
+  bad "~/.bashrc MISSING — terminals will show a bare '\$' with no colours"
+  note "the entrypoint seeds it from /etc/skel on boot; rebuild to apply"
+fi
+
 echo "── daemon identity ──"
 hn="$($DC exec -T --user paseo paseo bash -lc 'hostname' 2>/dev/null | tr -d '\r')"
 case "$hn" in

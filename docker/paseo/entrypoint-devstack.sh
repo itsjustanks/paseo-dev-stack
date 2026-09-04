@@ -123,6 +123,39 @@ if [ -x /usr/local/bin/stream-bridge.py ]; then
   log "stream bridge on :${AGENT_BROWSER_STREAM_BRIDGE_PORT:-9224}"
 fi
 
+# ── Shell skeleton ──────────────────────────────────────────────────────────
+# /home/paseo is a VOLUME, so the .bashrc/.profile that useradd normally copies
+# from /etc/skel are shadowed and absent. bash then starts with no PS1 and a
+# terminal shows a bare "$" with no colours, no history, no aliases — which
+# reads as a broken terminal rather than a missing dotfile.
+#
+# Seed the skeleton on first boot only; never overwrite a user's own file.
+for skel in /etc/skel/.bashrc /etc/skel/.profile /etc/skel/.bash_logout; do
+  [ -f "$skel" ] || continue
+  dest="$HOME_DIR/$(basename "$skel")"
+  [ -e "$dest" ] && continue
+  run_as_paseo cp "$skel" "$dest"
+  log "seeded $(basename "$skel")"
+done
+
+# Debian's stock .bashrc only enables a coloured prompt when it detects a
+# "known good" TERM, and it sets PS1 without the host part. Append our own so
+# every terminal shows user@host:cwd$ the way a normal login does. Guarded by a
+# marker so a rebuild does not append it twice.
+BRC="$HOME_DIR/.bashrc"
+if [ -f "$BRC" ] && ! grep -q '# devstack-prompt' "$BRC" 2>/dev/null; then
+  run_as_paseo tee -a "$BRC" >/dev/null <<'BASHRC'
+
+# devstack-prompt — a readable prompt in Paseo terminals.
+# Paseo may spawn bash WITHOUT -l, so this must live in .bashrc (which
+# non-login interactive shells read), not .profile (which they do not).
+force_color_prompt=yes
+PS1='\[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '
+export PATH="/usr/local/bin:${PNPM_HOME:-/usr/local/share/pnpm}/bin:${BUN_INSTALL:-/usr/local/share/bun}/bin:$HOME/.local/bin:$PATH"
+BASHRC
+  log "configured shell prompt"
+fi
+
 # ── Daemon defaults ─────────────────────────────────────────────────────────
 # Two settings a container install needs that the daemon does not default to:
 #
