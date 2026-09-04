@@ -1312,11 +1312,11 @@ class UI:
             a = dict(ST.admin)
 
         self.put(y, 2, "VERSION", C_HEAD, bold=True); y += 1
-        self.put(y, 4, f"repo   {a.get('version','?')}", C_TEXT)
+        self.put(y, 4, f"repo   {a.get('version','?')}")
         if a.get("commit"):
             self.put(y, 26, f"({a['commit']})", C_DIM, dim=True)
         y += 1
-        self.put(y, 4, f"image  {a.get('image','?')}", C_TEXT); y += 1
+        self.put(y, 4, f"image  {a.get('image','?')}"); y += 1
         if a.get("latest"):
             if a.get("update"):
                 self.put(y, 4, a["update"], C_WARN, bold=True)
@@ -1337,7 +1337,7 @@ class UI:
             up = "Up" in d.get("status", "")
             self.put(y, 2, "▸" if sel else " ", C_KEY, bold=True)
             self.put(y, 4, "●" if up else "○", C_OK if up else C_BAD)
-            self.put(y, 6, d.get("name", "?")[:20].ljust(21), C_TEXT, bold=sel)
+            self.put(y, 6, d.get("name", "?")[:20].ljust(21), bold=sel)
             self.put(y, 28, f":{d.get('port','-')}".ljust(8), C_KEY)
             self.put(y, 37, d.get("status", "")[:30], C_DIM, dim=True)
             self.put(y, 69, d.get("container", "")[:w - 71], C_DIM, dim=True)
@@ -1350,7 +1350,7 @@ class UI:
         self.put(y, 4, "●" if okr else "○", C_OK if okr else C_BAD)
         self.put(y, 6, "reachable from the agent container" if okr
                  else f"NOT reachable (http {r.get('health','?')})",
-                 C_TEXT if okr else C_BAD)
+                 0 if okr else C_BAD)
         y += 1
         self.put(y, 6, f"api key {r.get('key','?')}", C_DIM, dim=True); y += 1
         self.put(y, 6, f"dashboard http://127.0.0.1:{r.get('port','20128')}/dashboard",

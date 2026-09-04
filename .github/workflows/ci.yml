@@ -30,7 +30,11 @@ jobs:
         run: |
           python3 -m compileall -q scripts/*.py scripts/guard/*.py docker/paseo/*.py
           pipx install ruff >/dev/null 2>&1 || pip install --user ruff
-          ruff check --select=E9,F63,F7,F82 scripts/ docker/ || true
+          # F821 = undefined name. This is NOT advisory: three separate crashes
+          # shipped from referencing names that did not exist (C_TEXT, env_val,
+          # ui.ask). Python only fails on those at the moment the line runs, so
+          # a TUI tab could look fine and die when you opened it.
+          ruff check --select=E9,F63,F7,F82,F821 scripts/ docker/
 
       - name: compose config is valid
         run: |
