@@ -248,8 +248,14 @@ RUN chmod -R a+rX "$AGENT_HOME" \
     # mid-session without sudo (and so `make add-agent` works as paseo).
     # These are OUTSIDE the /home/paseo volume, so they persist across restarts
     # but reset on rebuild — which is what EXTRA_NPM_PACKAGES is for.
-    && mkdir -p /usr/local/lib/node_modules /usr/local/bin /usr/local/share/man \
-    && chown -R paseo:paseo /usr/local/lib/node_modules
+    && mkdir -p /usr/local/lib/node_modules /usr/local/bin /usr/local/share/man/man1 \
+    # npm -g needs BOTH: the package dir to write into, and /usr/local/bin to
+    # symlink the entrypoint into (it fails with EACCES on the symlink
+    # otherwise). Group-write with the paseo group is enough — no need to hand
+    # root's bin directory away entirely.
+    && chown -R paseo:paseo /usr/local/lib/node_modules \
+    && chgrp -R paseo /usr/local/bin /usr/local/share/man/man1 \
+    && chmod -R g+w /usr/local/bin /usr/local/share/man/man1
 
 # ── VS Code CLI (dev tunnels) ───────────────────────────────────────────────
 # `code tunnel` exposes this container as a remote in vscode.dev — a full
@@ -286,7 +292,9 @@ COPY docker/paseo/agent-env.sh           /etc/profile.d/10-devstack-agents.sh
 RUN chmod +x /usr/local/bin/entrypoint-devstack.sh /usr/local/bin/stream-bridge.py \
     && chmod 0644 /etc/profile.d/10-devstack-agents.sh
 
-ENV PATH="/usr/local/bin:/home/paseo/.local/bin:${PATH}" \
+# PNPM_HOME/bin must be on PATH or `pnpm add -g` refuses to run
+# ("configured global bin directory is not in PATH").
+ENV PATH="/usr/local/bin:/usr/local/share/pnpm/bin:/usr/local/share/bun/bin:/home/paseo/.local/bin:${PATH}" \
     npm_config_update_notifier=false \
     DO_NOT_TRACK=1 \
     PASEO_PLUGIN_SOURCE=/opt/paseo-plugins

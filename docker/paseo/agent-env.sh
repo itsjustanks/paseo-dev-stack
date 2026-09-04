@@ -17,4 +17,7 @@ if [ -n "${NINEROUTER_URL:-}" ] && [ -n "${NINEROUTER_KEY:-}" ]; then
   unset ANTHROPIC_API_KEY 2>/dev/null || true
 fi
 
-export PATH="/usr/local/bin:$HOME/.local/bin:$PATH"
+# pnpm refuses `add -g` unless its bin dir is on PATH; bun's too.
+export PNPM_HOME="${PNPM_HOME:-/usr/local/share/pnpm}"
+export BUN_INSTALL="${BUN_INSTALL:-/usr/local/share/bun}"
+export PATH="/usr/local/bin:$PNPM_HOME/bin:$BUN_INSTALL/bin:$HOME/.local/bin:$PATH"
