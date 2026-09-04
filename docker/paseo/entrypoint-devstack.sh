@@ -104,7 +104,10 @@ if [ "$(id -u)" = "0" ]; then
     [ -e "$d" ] && [ "$(stat -c %u "$d")" != "1000" ] && chown -R paseo:paseo "$d" || true
   done
 fi
-[ -f /opt/chrome-path ] && export AGENT_BROWSER_EXECUTABLE_PATH="$(cat /opt/chrome-path)"
+if [ -f /opt/chrome-path ]; then
+  AGENT_BROWSER_EXECUTABLE_PATH="$(cat /opt/chrome-path)"
+  export AGENT_BROWSER_EXECUTABLE_PATH
+fi
 
 # ── agent-browser stream bridge ─────────────────────────────────────────────
 # agent-browser binds its live-view WebSocket to the container's 127.0.0.1 with

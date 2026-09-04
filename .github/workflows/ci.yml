@@ -24,7 +24,7 @@ jobs:
           # SC2016: single-quoted $VARS inside docker exec are intentional —
           #         they must expand INSIDE the container, not on the host.
           shellcheck -e SC1091,SC2016 -S warning \
-            install.sh scripts/*.sh docker/paseo/*.sh
+            install.sh scripts/*.sh scripts/pds docker/paseo/*.sh
 
       - name: python syntax + lint
         run: |

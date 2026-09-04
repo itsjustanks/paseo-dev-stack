@@ -5,7 +5,7 @@
 # a container that address is the container's, which no phone or laptop can
 # reach — so we also print the routes that actually work from outside.
 set -euo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 DC="docker compose"
 
 port="$(grep -E '^PASEO_PORT=' .env 2>/dev/null | cut -d= -f2)"; port="${port:-6767}"

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Verify every component of the stack. Exits non-zero if anything is broken.
 set -uo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 DC="docker compose"; fail=0
 ok()   { printf '  \033[32m✓\033[0m %s\n' "$*"; }
 bad()  { printf '  \033[31m✗\033[0m %s\n' "$*"; fail=1; }

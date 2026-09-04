@@ -24,7 +24,7 @@
 # OpenAI's consumer terms. That is your call to make knowingly.
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 DC="docker compose"
 SVC=paseo
 

@@ -16,7 +16,7 @@
 #   SIDECAR_GB        memory kept for 9router + cloudflared (default 1)
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 
 HOST_RESERVE_GB="${HOST_RESERVE_GB:-1}"
 SIDECAR_GB="${SIDECAR_GB:-1}"

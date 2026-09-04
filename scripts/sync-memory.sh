@@ -10,7 +10,7 @@
 #   ./scripts/sync-memory.sh pull   # container -> repo
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 SVC=paseo
 CONTAINER_MEM=/home/paseo/.claude/memory
 REPO_MEM=./memory

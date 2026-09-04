@@ -20,7 +20,7 @@
 # (EXTRA_NPM_PACKAGES) so the next build bakes it in.
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 DC="docker compose"
 SVC=paseo
 

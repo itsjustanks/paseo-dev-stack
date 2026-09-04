@@ -9,7 +9,7 @@
 # must survive every update. Only containers and images are replaced.
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 
 APPLY=0; [ "${1:-}" = "--apply" ] && APPLY=1
 REPO="${PDS_REPO:-itsjustanks/paseo-dev-stack}"
