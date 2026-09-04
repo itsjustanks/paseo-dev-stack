@@ -91,7 +91,7 @@ command -v apt-get >/dev/null || die "this installer supports Debian/Ubuntu (apt
 # cloud-init can race us for the apt lock on a fresh boot. Wait it out.
 for i in $(seq 1 60); do
   if fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || fuser /var/lib/apt/lists/lock >/dev/null 2>&1; then
-    [ "$i" = 1 ] && log "waiting for another apt process (cloud-init) to finish"
+    if [ "$i" = 1 ]; then log "waiting for another apt process (cloud-init) to finish"; fi
     sleep 5
   else break; fi
 done
@@ -132,13 +132,26 @@ if [ ! -f .env ]; then
   sudo -u "$DEVSTACK_USER" sed -i \
     -e "s|^PASEO_PASSWORD=.*|PASEO_PASSWORD=${pw}|" \
     -e "s|^NINEROUTER_PASSWORD=.*|NINEROUTER_PASSWORD=${rpw}|" .env
-  [ -n "${PASEO_HOSTNAMES:-}" ] && sudo -u "$DEVSTACK_USER" sed -i "s|^PASEO_HOSTNAMES=.*|PASEO_HOSTNAMES=${PASEO_HOSTNAMES}|" .env
-  [ -n "${TUNNEL_TOKEN:-}" ]    && sudo -u "$DEVSTACK_USER" sed -i "s|^TUNNEL_TOKEN=.*|TUNNEL_TOKEN=${TUNNEL_TOKEN}|" .env
+  # NOTE: `[ -n "$x" ] && cmd` evaluates to FALSE when x is empty, and under
+  # `set -e` that aborts the script — silently skipping the credentials file
+  # written just below. Use if/fi, never the && form, for optional steps.
+  if [ -n "${PASEO_HOSTNAMES:-}" ]; then
+    sudo -u "$DEVSTACK_USER" sed -i "s|^PASEO_HOSTNAMES=.*|PASEO_HOSTNAMES=${PASEO_HOSTNAMES}|" .env
+  fi
+  if [ -n "${TUNNEL_TOKEN:-}" ]; then
+    sudo -u "$DEVSTACK_USER" sed -i "s|^TUNNEL_TOKEN=.*|TUNNEL_TOKEN=${TUNNEL_TOKEN}|" .env
+  fi
   # Credentials are also written where a human can find them after a headless
   # cloud-init run, since the console output is long gone by then.
   printf 'PASEO_PASSWORD=%s\nNINEROUTER_PASSWORD=%s\n' "$pw" "$rpw" > /root/paseo-dev-stack-credentials.txt
   chmod 600 /root/paseo-dev-stack-credentials.txt
   log "credentials written to /root/paseo-dev-stack-credentials.txt"
+
+  # Size the container to this host: give it almost everything, keeping a
+  # reserve so an OOM cannot take the box down with it.
+  if [ -x scripts/autotune-memory.sh ]; then
+    sudo -u "$DEVSTACK_USER" ./scripts/autotune-memory.sh --write 2>&1 | sed 's/^/    /' || warn "autotune failed"
+  fi
 fi
 
 # ─── systemd unit: survive reboots ──────────────────────────────────────────
