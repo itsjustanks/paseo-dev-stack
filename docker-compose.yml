@@ -16,6 +16,7 @@ services:
       args:
         SUPABASE_VERSION: ${SUPABASE_VERSION:-}
         EXTRA_NPM_PACKAGES: ${EXTRA_NPM_PACKAGES:-}
+        PDS_VERSION: ${PDS_VERSION:-dev}
     image: paseo-dev-stack/agents:latest
     container_name: paseo-dev-stack-paseo
     restart: unless-stopped
@@ -80,9 +81,58 @@ services:
       PORT: "20128"
       # Must be 0.0.0.0, not 127.0.0.1, or sibling containers cannot reach it.
       HOSTNAME: 0.0.0.0
+      # 9router REFUSES remote logins while the password is still the shipped
+      # default (123456) — it answers 403 "Default password must be changed
+      # before remote access". Inside Docker every login is remote, so without
+      # this you cannot reach the dashboard or its API at all.
+      # Only applied on first boot; once a password is stored this is ignored.
+      INITIAL_PASSWORD: ${NINEROUTER_PASSWORD:-}
     volumes:
       - ninerouter-data:/app/data
     networks: [pds]
+
+  # ── Satellite Paseo daemons ────────────────────────────────────────────────
+  # Extra, independent daemons that share the SAME 9router pool. Each has its
+  # own state volume, its own workspace, and its own pairing identity, so it
+  # runs its own agents — but every one of them routes models through the one
+  # 9router, so subscriptions/quotas are pooled rather than duplicated.
+  #
+  #   docker compose --profile satellites up -d
+  #
+  # They reach the router by SERVICE NAME (http://9router:20128), which does not
+  # change with the public hostname. 9router itself is stock upstream — nothing
+  # here modifies it.
+  paseo-2:
+    extends:
+      service: paseo
+    profiles: [satellites]
+    container_name: pds-paseo-2
+    ports:
+      - "127.0.0.1:${PASEO_PORT_2:-6768}:6767"
+      - "127.0.0.1:${AGENT_BROWSER_STREAM_PORT_2:-9225}:${AGENT_BROWSER_STREAM_BRIDGE_PORT:-9224}"
+    volumes:
+      - paseo-home-2:/home/paseo
+      - ${WORKSPACE_DIR_2:-./workspace-2}:/workspace
+      - ./config:/opt/devstack-seed:ro
+      - ./memory:/opt/devstack-seed-memory:ro
+    mem_limit: ${PASEO_MEM_LIMIT_2:-0}
+    memswap_limit: ${PASEO_MEMSWAP_LIMIT_2:-0}
+
+  paseo-3:
+    extends:
+      service: paseo
+    profiles: [satellites]
+    container_name: pds-paseo-3
+    ports:
+      - "127.0.0.1:${PASEO_PORT_3:-6769}:6767"
+      - "127.0.0.1:${AGENT_BROWSER_STREAM_PORT_3:-9226}:${AGENT_BROWSER_STREAM_BRIDGE_PORT:-9224}"
+    volumes:
+      - paseo-home-3:/home/paseo
+      - ${WORKSPACE_DIR_3:-./workspace-3}:/workspace
+      - ./config:/opt/devstack-seed:ro
+      - ./memory:/opt/devstack-seed-memory:ro
+    mem_limit: ${PASEO_MEM_LIMIT_3:-0}
+    memswap_limit: ${PASEO_MEMSWAP_LIMIT_3:-0}
 
   # Cloudflare tunnel — remotely-managed (token) mode.
   # Enabled only when TUNNEL_TOKEN is set:  docker compose --profile tunnel up -d
@@ -112,6 +162,8 @@ services:
 
 volumes:
   paseo-home:
+  paseo-home-2:
+  paseo-home-3:
   ninerouter-data:
 
 networks:

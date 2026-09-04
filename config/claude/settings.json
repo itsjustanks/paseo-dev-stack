@@ -1,5 +1,5 @@
 {
-  "$comment": "Seeded into /home/paseo/.claude/settings.json on FIRST BOOT ONLY. Edit inside the container afterwards; the entrypoint never overwrites an existing file.",
+  "$comment": "Seeded into /home/paseo/.claude/settings.json on FIRST BOOT ONLY, and only when that file does not already exist - your own settings are never overwritten. Each daemon (including satellites) has its own volume, so these are per-daemon, not shared. Contains no credentials, tokens or account data. Set DEVSTACK_NO_SEED=1 to skip seeding entirely.",
   "autoMemoryDirectory": "/home/paseo/.claude/memory",
   "includeCoAuthoredBy": false,
   "outputStyle": "Concise",

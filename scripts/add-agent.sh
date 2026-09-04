@@ -53,6 +53,17 @@ if [ "${1:-}" = "--list" ]; then
       fi
     done
     echo
+    echo "── cloud / platform CLIs ──"
+    for c in doctl cloudflared wrangler vercel netlify flyctl supabase gh code; do
+      if command -v "$c" >/dev/null 2>&1; then
+        # doctl (and some others) use `version`, not `--version`.
+        v="$($c --version 2>&1)"
+        case "$v" in *"unknown flag"*|*"unknown command"*) v="$($c version 2>&1)" ;; esac
+        v="$(printf "%s" "$v" | grep -viE "^(warning|warn|note):" | grep -v "^$" | head -1)"
+        printf "  %-14s %s\n" "$c" "${v:-installed}"
+      fi
+    done
+    echo
     echo "── extra global npm packages ──"
     npm ls -g --depth=0 2>/dev/null | tail -n +2 | sed "s/^/  /"'
   exit 0

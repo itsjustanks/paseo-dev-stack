@@ -39,8 +39,17 @@ seed_file() {
   log "seeded $dest"
 }
 
-seed_file "$SEED/claude/settings.json" "$HOME_DIR/.claude/settings.json"
-seed_file "$SEED/codex/config.toml"    "$HOME_DIR/.codex/config.toml"
+# Seeding is FIRST BOOT ONLY and never overwrites: seed_file returns early if
+# the destination exists. Each daemon (including every satellite) has its own
+# /home/paseo volume, so one daemon's Claude/Codex settings are never visible
+# to another and are never replaced by the repo's defaults on a later restart.
+# Set DEVSTACK_NO_SEED=1 to skip seeding entirely and start from stock defaults.
+if [ "${DEVSTACK_NO_SEED:-0}" = "1" ]; then
+  log "seeding disabled (DEVSTACK_NO_SEED=1)"
+else
+  seed_file "$SEED/claude/settings.json" "$HOME_DIR/.claude/settings.json"
+  seed_file "$SEED/codex/config.toml"    "$HOME_DIR/.codex/config.toml"
+fi
 
 # ── Auto-memory ─────────────────────────────────────────────────────────────
 # Claude Code's auto-memory lives at ~/.claude/projects/<slug>/memory, where

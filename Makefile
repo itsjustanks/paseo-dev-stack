@@ -9,12 +9,16 @@ DC    := docker compose
         tunnel quick-tunnel tunnel-url router memory-push memory-pull \
         guards guards-status guards-dry mem autotune autotune-write \
         agents add-agent router-status router-key router-on router-off \
+        version update update-apply pair satellites satellites-down \
         browser-open browser-stream browser-view browser-test clean nuke
 
 tui: ## Interactive control panel (start here)
 	@python3 scripts/tui.py
 
 help: ## Show this help
+	@echo
+	@printf "  \033[1;36mmake tui\033[0m   ← interactive control panel for everything below\n"
+	@echo
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
 	  | awk 'BEGIN{FS=":.*?## "};{printf "  \033[36m%-16s\033[0m %s\n",$$1,$$2}'
 
@@ -29,7 +33,7 @@ up: .env ## Build if needed and start the stack
 	@echo
 	@echo "  Paseo   → http://127.0.0.1:$${PASEO_PORT:-6767}"
 	@echo "  9router → http://127.0.0.1:$${NINEROUTER_PORT:-20128}  (dashboard pw: see .env)"
-	@echo "  next: make auth-all"
+	@printf "  next: \033[1;36mmake tui\033[0m  (or: make auth-all)\n"
 
 down: ## Stop the stack (volumes and credentials are kept)
 	$(DC) down
@@ -142,6 +146,20 @@ autotune: ## Show RAM-based sizing for this host
 autotune-write: ## Apply RAM-based sizing to .env
 	@./scripts/autotune-memory.sh --write
 
+# ── Pairing & satellites ────────────────────────────────────────────────────
+pair: ## Print the Paseo pairing link (relay — no public port needed)
+	@./scripts/pair.sh
+
+satellites: ## Start extra Paseo daemons sharing the same 9router pool
+	$(DC) --profile satellites up -d
+	@echo
+	@echo "  paseo-2 -> http://127.0.0.1:$${PASEO_PORT_2:-6768}"
+	@echo "  paseo-3 -> http://127.0.0.1:$${PASEO_PORT_3:-6769}"
+	@echo "  each has its own state + workspace; all share http://9router:20128"
+
+satellites-down: ## Stop the satellite daemons (their volumes are kept)
+	$(DC) --profile satellites stop paseo-2 paseo-3
+
 router: ## Open the 9router dashboard URL
 	@echo "http://127.0.0.1:$${NINEROUTER_PORT:-20128}/dashboard"
 
@@ -176,6 +194,17 @@ mem: ## Show memory pressure: host, container, and any dev servers
 	@ps -eo pid=,etimes=,rss=,args= 2>/dev/null | grep -E 'next-server \(v' | grep -v grep \
 	  | awk '{printf "  pid %s  %.1fGB  %.1fh  %s\n", $$1, $$3/1048576, $$2/3600, $$4}' \
 	  || echo "  none running"
+
+# ── Updates ─────────────────────────────────────────────────────────────────
+version: ## Show the installed version
+	@printf "  repo:      %s\n" "$$(cat VERSION 2>/dev/null || git describe --tags --always 2>/dev/null || echo unknown)"
+	@printf "  image:     %s\n" "$$($(DC) exec -T --user paseo paseo printenv PDS_VERSION 2>/dev/null || echo 'not running')"
+
+update: ## Check for a newer release (dry run)
+	@./scripts/update.sh
+
+update-apply: ## Pull, merge .env, rebuild, restart (volumes kept)
+	@./scripts/update.sh --apply
 
 # ── Checks ──────────────────────────────────────────────────────────────────
 doctor: ## Verify every tool inside the container

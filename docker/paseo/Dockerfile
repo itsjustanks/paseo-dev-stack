@@ -70,6 +70,50 @@ RUN set -eux; \
     dpkg -i /tmp/supabase.deb; rm -f /tmp/supabase.deb; \
     supabase --version
 
+# ── Cloud CLIs ──────────────────────────────────────────────────────────────
+# doctl (DigitalOcean) — released as a tarball, no apt repo. Resolve the latest
+# tag at build time; a hardcoded version 404s the day upstream moves on.
+RUN set -eux; \
+    case "$(dpkg --print-architecture)" in \
+      amd64) doarch=amd64 ;; arm64) doarch=arm64 ;; \
+      *) echo "unsupported arch for doctl"; exit 1 ;; \
+    esac; \
+    ver="$(curl -fsSL https://api.github.com/repos/digitalocean/doctl/releases/latest \
+           | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' \
+           | head -1 | sed -E 's/.*"v?([^"]+)"$/\1/')"; \
+    echo "$ver" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' \
+      || { echo "bad doctl version: '$ver'"; exit 1; }; \
+    curl -fsSL "https://github.com/digitalocean/doctl/releases/download/v${ver}/doctl-${ver}-linux-${doarch}.tar.gz" \
+      | tar -xz -C /usr/local/bin doctl; \
+    chmod +x /usr/local/bin/doctl; \
+    doctl version | head -1
+
+# cloudflared (Cloudflare Tunnel client). The tunnel itself runs as its own
+# container, but having the CLI here lets an agent create/manage tunnels,
+# and `cloudflared tunnel login` from inside the workspace.
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    curl -fsSL -o /tmp/cloudflared.deb \
+      "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${arch}.deb"; \
+    dpkg -i /tmp/cloudflared.deb; rm -f /tmp/cloudflared.deb; \
+    cloudflared --version
+
+# Node-based cloud CLIs. These install to /usr/local (NOT $HOME), so they are
+# not masked by the /home/paseo volume and need no HOME redirection.
+#   wrangler  — Cloudflare Workers/Pages/R2/D1
+#   vercel    — Vercel deployments
+#   netlify   — Netlify (optional but tiny)
+RUN npm install -g wrangler vercel netlify-cli \
+    && wrangler --version && vercel --version && netlify --version | head -1
+
+# flyctl (Fly.io) — installer honours FLYCTL_INSTALL and writes into it.
+RUN set -eux; \
+    FLYCTL_INSTALL=/usr/local/flyctl sh -c "curl -fsSL https://fly.io/install.sh | sh"; \
+    ln -sf /usr/local/flyctl/bin/flyctl /usr/local/bin/flyctl; \
+    ln -sf /usr/local/flyctl/bin/flyctl /usr/local/bin/fly; \
+    chmod -R a+rX /usr/local/flyctl; \
+    flyctl version
+
 # ── GitHub CLI ──────────────────────────────────────────────────────────────
 RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
       -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
@@ -186,6 +230,12 @@ ENV PATH="/usr/local/bin:/home/paseo/.local/bin:${PATH}" \
     npm_config_update_notifier=false \
     DO_NOT_TRACK=1 \
     PASEO_PLUGIN_SOURCE=/opt/paseo-plugins
+
+ARG PDS_VERSION=dev
+ENV PDS_VERSION=${PDS_VERSION}
+LABEL org.opencontainers.image.title="paseo-dev-stack" \
+      org.opencontainers.image.source="https://github.com/itsjustanks/paseo-dev-stack" \
+      org.opencontainers.image.version="${PDS_VERSION}"
 
 # Our entrypoint seeds config/memory then delegates to the base entrypoint,
 # which drops root → paseo via gosu. tini stays PID 1.

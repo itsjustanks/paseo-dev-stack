@@ -61,7 +61,7 @@ version_image() {
   # string then compared unequal to every version and forced an endless
   # rebuild. Capture first, test the value, then decide.
   v="$(docker compose exec -T --user paseo paseo \
-        cat /etc/devstack-version 2>/dev/null | tr -d ' \t\n\r')"
+        printenv PDS_VERSION 2>/dev/null | tr -d ' \t\n\r')"
   [ -n "$v" ] && printf '%s' "$v" || printf 'unknown'
 }
 

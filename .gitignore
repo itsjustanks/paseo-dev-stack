@@ -1,6 +1,8 @@
 .env
 .env.local
 workspace/
+workspace-2/
+workspace-3/
 config/cloudflared/*.json
 config/cloudflared/cert.pem
 *.log

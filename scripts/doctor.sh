@@ -17,7 +17,8 @@ echo "── agent CLIs ──"
 for t in "claude --version" "codex --version" "kimi --version" \
          "cursor-agent --version" "supabase --version" "gh --version" \
          "agent-browser --version" "node --version" "python3 --version" \
-         "uv --version" "git --version"; do
+         "uv --version" "git --version" "doctl version" "cloudflared --version" \
+         "wrangler --version" "vercel --version" "flyctl version" "code --version"; do
   bin="${t%% *}"
   # Judge on EXIT CODE, not on the first line: several CLIs print a harmless
   # warning to stderr before the version (codex emits a PATH-alias warning

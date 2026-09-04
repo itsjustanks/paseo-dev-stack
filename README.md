@@ -112,8 +112,10 @@ The installer detects the OS and skips privileged host setup on a Mac.
 | **VS Code dev tunnels** | `code tunnel` → edit the box from vscode.dev in a browser |
 | **9router Paseo plugin** | Accounts, quotas and models in the Paseo sidebar |
 | **Agent CLIs** | Claude Code · Codex · Kimi Code · Cursor Agent |
-| **Dev tools** | Supabase CLI · gh · git · Node 22 · Python 3 + uv · ripgrep · jq |
+| **Cloud CLIs** | doctl · cloudflared · wrangler · vercel · netlify · flyctl · supabase · gh |
+| **Dev tools** | git · Node 22 · Python 3 + uv · ripgrep · jq · build-essential |
 | **Memory guards** | Reaps runaway Next dev servers and trims the caches that feed them |
+| **Control panel** | `make tui` — services, memory, logins, tunnels in one screen |
 
 ## Repo layout
 
@@ -212,6 +214,32 @@ without extra configuration.
 make quick-tunnel     # prints the trycloudflare.com URL
 ```
 
+## Watching the browser remotely
+
+`agent-browser` runs headless, but you can watch what it sees — and click and
+type into it — from another machine:
+
+```bash
+make browser-open U=https://example.com   # open a page
+make browser-view                         # open the live viewer locally
+```
+
+The stream is a WebSocket on `127.0.0.1` only, so reach it over SSH:
+
+```bash
+ssh -N -L 9223:127.0.0.1:9223 paseo@<host>
+```
+
+> agent-browser binds that socket to the **container's** loopback with no
+> bind-address option, so Docker cannot publish it directly — a `-p` mapping
+> connects to nothing and the client gets `ECONNRESET`. The image runs a tiny
+> bridge (`0.0.0.0:9224 → 127.0.0.1:9223`) so the port is publishable; the host
+> side stays bound to localhost.
+
+Tune bandwidth with `AGENT_BROWSER_STREAM_QUALITY` and the `MAX_WIDTH`/
+`MAX_HEIGHT` caps — at 1280×720, quality 80 is ~54KB/frame and quality 20 at
+640×360 is ~9KB.
+
 ## Auto-memory
 
 Claude Code's auto-memory is plain markdown — a `MEMORY.md` index plus one file
@@ -226,6 +254,23 @@ make memory-pull    # container  -> ./memory/   (then commit)
 Only `MEMORY.md` (first 200 lines / 25KB) loads at session start; topic files
 are read on demand.
 
+## Staying current
+
+```bash
+make version        # installed version (repo + image)
+make update         # what a newer release would change — nothing is touched
+make update-apply   # pull, merge new .env keys, rebuild, restart
+```
+
+The `.env` merge only **appends keys you do not have**; your existing values
+are never rewritten, including ones containing `=`, `#`, or spaces. Docker
+volumes are never touched, so agent logins survive every update.
+
+Releases publish a prebuilt amd64 image to
+`ghcr.io/itsjustanks/paseo-dev-stack`. arm64 builds locally instead — several
+agent installers ship glibc amd64 binaries, so an emulated arm64 image would be
+slow to build and broken to run.
+
 ## Commands
 
 Run `make` for the full list. Most-used:
@@ -239,6 +284,11 @@ make doctor                   verify every component
 make browser-test             smoke-test headless Chromium
 make code-tunnel              VS Code dev tunnel -> vscode.dev
 make quick-tunnel             public URL, no account needed
+make tui                      the control panel
+make pair                     Paseo pairing link
+make agents                   list installed agent CLIs
+make autotune                 size memory to this host
+make update                   check for a newer release
 make nuke                     delete everything incl. credentials
 ```
 
@@ -263,6 +313,97 @@ volume — so it cannot be done at build time). It adds a **9Router** sidebar
 panel: setup checklist, per-account quota bars, parked-account recovery, and the
 model list. Pin a version with `--build-arg PLUGIN_9ROUTER_REF=v1.2.3`.
 
+## The control panel
+
+```bash
+make tui
+```
+
+One screen for the whole stack: live service health, host and per-container
+memory, running dev servers, public tunnel URLs, and single-key actions for
+everything below. It is plain Python + curses — no `pip install`, nothing to
+break on a fresh box.
+
+Interactive actions (agent logins, shells, log tails) hand the terminal over to
+the real program and take it back cleanly when you exit.
+
+## Agents
+
+Four agent CLIs ship in the image: **Claude Code**, **Codex**, **Kimi Code**,
+and **Cursor Agent**. Log in to each once — credentials live on the volume and
+survive restarts and rebuilds:
+
+```bash
+make auth-all         # or: make auth-claude / auth-codex / auth-kimi / auth-cursor
+```
+
+### Adding more
+
+```bash
+make agents                                    # what is installed
+make add-agent M=npm P=opencode-ai             # install now (this container)
+make add-agent M=npm P=opencode-ai PERSIST=1   # ...and bake into the next build
+make add-agent M=curl P=https://example.com/install.sh
+```
+
+`--persist` records npm packages in `EXTRA_NPM_PACKAGES`. For a `curl`
+installer, add a `RUN` line to the Dockerfile following the existing pattern —
+install with `HOME=$AGENT_HOME`, then symlink into `/usr/local/bin`, so the
+`/home/paseo` volume cannot mask it.
+
+## Model routing with 9router
+
+9router holds several subscriptions, tracks each one's quota, and falls back
+when one runs out. It is the **stock upstream image** — this repo only sets its
+documented environment variables.
+
+```bash
+make router-status    # what is routed
+make router-key       # mint an API key into .env
+make router-on        # route claude + codex through it
+make router-off       # back to each CLI's own login
+```
+
+These call **9router's own API**, which owns CLI wiring: it writes
+`~/.claude/settings.json` and `~/.codex/config.toml` and can cleanly undo both.
+Hand-editing those files would fight it, so this repo never does.
+
+Kimi and Cursor speak vendor-specific protocols with no base-URL override, so
+they always use their own logins. **Paseo's own preloaded providers are never
+modified** — the bundled plugin adds a separate `9Router` provider alongside
+them.
+
+> 9router refuses remote logins while its password is the shipped default, and
+> in Docker every login is remote. Compose passes `NINEROUTER_PASSWORD` as
+> `INITIAL_PASSWORD` on first boot so the dashboard is reachable at all.
+
+## Multiple daemons
+
+Run extra Paseo daemons that share the same 9router pool:
+
+```bash
+make satellites          # starts paseo-2 (:6768) and paseo-3 (:6769)
+make satellites-down
+```
+
+Each satellite is **fully isolated**: its own state volume (agents,
+credentials, history), its own workspace directory, its own port and pairing
+identity. Nothing is shared except the read-only config/memory seeds and the
+router itself — so subscriptions are pooled while projects stay separate.
+
+Seeded config is written **only on first boot and only when absent**, so a
+daemon with its own Claude settings keeps them. `DEVSTACK_NO_SEED=1` skips
+seeding entirely.
+
+## Pairing
+
+```bash
+make pair
+```
+
+Prints a pairing link via Paseo's relay, so a phone or another laptop can reach
+the daemon **without any public port**. Treat the link like a password.
+
 ## Memory guards
 
 A Next dev server's memory is **native** — Turbopack is Rust, so it lives
@@ -272,6 +413,18 @@ when it dies, so a ballooning server becomes an infinite grow → get killed →
 respawn loop. Killing the child alone never works; the parent must go first.
 
 Three layers handle this:
+
+Size the stack to the host automatically:
+
+```bash
+make autotune          # show the recommendation
+make autotune-write    # apply it to .env
+```
+
+It gives the agent container almost everything — on a 32GB box, 28GB — while
+keeping a reserve (the larger of 1GB or 5%) so that when something *does* blow
+up, the host still has enough memory to run sshd and docker and let you restart
+things. Without that reserve an OOM takes the whole box down.
 
 | Layer | What it does |
 |---|---|
