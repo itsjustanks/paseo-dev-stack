@@ -7,3 +7,5 @@ config/cloudflared/*.json
 config/cloudflared/cert.pem
 *.log
 .DS_Store
+__pycache__/
+*.pyc

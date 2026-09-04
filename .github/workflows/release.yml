@@ -11,65 +11,18 @@ on:
 
 permissions:
   contents: write      # create the GitHub Release
-  packages: write      # push to GHCR
 
 env:
   REGISTRY: ghcr.io
   IMAGE: ${{ github.repository }}
 
+# NOTE: the IMAGE is built and pushed by release-image.yml, which uses NATIVE
+# amd64 + arm64 runners. Do not add a build job here — two workflows racing to
+# push the same tag is how you get a half-published manifest.
+
 jobs:
-  image:
-    name: build + push image
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: docker/setup-buildx-action@v4
-
-      - uses: docker/login-action@v4
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - id: meta
-        uses: docker/metadata-action@v6
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE }}
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
-
-      # amd64 ONLY, deliberately.
-      #
-      # This image installs four agent CLIs from curl installers plus a ~150MB
-      # Chrome download. Under QEMU emulation an arm64 build of that is roughly
-      # 10-20x slower and routinely exceeds the 6h job limit — and several of
-      # the vendor installers ship glibc amd64 binaries anyway, so the emulated
-      # result would be broken even if it finished.
-      #
-      # arm64 users build locally instead (`make up`), which is native and fast.
-      # If a native arm64 runner becomes available, add it as a second job with
-      # its own platform and merge with a manifest list.
-      - name: build and push
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: docker/paseo/Dockerfile
-          platforms: linux/amd64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          build-args: |
-            PDS_VERSION=${{ github.ref_name }}
-
   release:
     name: github release
-    needs: image
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

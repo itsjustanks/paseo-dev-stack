@@ -130,10 +130,30 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
 # ─────────────────────────────────────────────────────────────────────────────
 RUN mkdir -p "$AGENT_HOME" && chmod 755 "$AGENT_HOME"
 
-# Claude Code — installer honours $HOME → $HOME/.local/bin/claude
-RUN HOME="$AGENT_HOME" bash -c 'curl -fsSL https://claude.ai/install.sh | bash' \
-    && ln -sf "$AGENT_HOME/.local/bin/claude" /usr/local/bin/claude \
-    && claude --version
+# Claude Code.
+#
+# The installer downloads a launcher and then delegates to `claude install`,
+# and THAT binary resolves the invoking user's real home rather than $HOME — so
+# even with HOME redirected it writes the versioned payload under
+# /home/paseo/.local/share/claude/... and symlinks to it. That path is the
+# VOLUME, so the binary disappears on the next `up` and `claude` becomes
+# "command not found" (scripts/doctor.sh asserts against exactly this).
+#
+# Fix: install, then relocate the real executable into the image and point
+# /usr/local/bin/claude at it. Never leave a symlink targeting /home/paseo.
+RUN set -eux; \
+    HOME="$AGENT_HOME" bash -c 'curl -fsSL https://claude.ai/install.sh | bash'; \
+    real=""; \
+    for cand in "$AGENT_HOME/.local/bin/claude" /home/paseo/.local/bin/claude /root/.local/bin/claude; do \
+      [ -e "$cand" ] || continue; \
+      t="$(readlink -f "$cand" 2>/dev/null || echo "$cand")"; \
+      if [ -f "$t" ]; then real="$t"; break; fi; \
+    done; \
+    if [ -z "$real" ]; then echo "claude binary not found after install"; exit 1; fi; \
+    install -D -m 0755 "$real" /opt/claude-code/claude; \
+    ln -sf /opt/claude-code/claude /usr/local/bin/claude; \
+    rm -rf /home/paseo/.local/share/claude /home/paseo/.local/bin/claude "$AGENT_HOME/.local/share/claude" || true; \
+    claude --version
 
 # Codex — honours CODEX_INSTALL_DIR; CODEX_HOME is overridden at RUNTIME by the
 # base image to /home/paseo/.codex, so auth persists on the volume.
