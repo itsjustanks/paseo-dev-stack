@@ -203,9 +203,13 @@ if command -v systemctl >/dev/null 2>&1; then
     # A guard that aborts every pass exits 0 and looks healthy. Its log is the
     # only place that shows it. Empty/absent log = nothing needed reaping.
     lg="/home/$gu/.paseo/$t.log"
-    if [ -s "$lg" ] && [ "$(grep -vc 'scan failed\|no roots to scan' "$lg" 2>/dev/null)" = 0 ]; then
-      bad "$t: every logged pass aborted — it has never done any work"
+    # Only the RECENT tail matters. Grepping the whole log means a guard that
+    # has since recovered stays red forever on historical failures -- which is
+    # the same lying-monitor problem in reverse.
+    if [ -s "$lg" ] && [ "$(tail -20 "$lg" 2>/dev/null | grep -vc 'scan failed\|no roots to scan')" = 0 ]; then
+      bad "$t: every recent pass aborted — it is not doing any work"
       note "last: $(tail -1 "$lg" 2>/dev/null)"
+      note "if the host was starved, re-run it once it is idle: sudo systemctl start $t.service"
     else
       ok "$t.timer enabled${roots:+ (roots: $roots)}"
     fi
