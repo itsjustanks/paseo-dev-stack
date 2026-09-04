@@ -10,6 +10,7 @@ DC    := docker compose
         guards guards-status guards-dry mem autotune autotune-write \
         agents add-agent router-status router-key router-on router-off \
         version update update-apply pair satellites satellites-down \
+        new-daemon router-tunnel \
         browser-open browser-stream browser-view browser-test clean nuke
 
 # Running make as root inside this repo creates root-owned files (.env edits,
@@ -163,6 +164,12 @@ autotune-write: ## Apply RAM-based sizing to .env
 # ── Pairing & satellites ────────────────────────────────────────────────────
 pair: ## Print the Paseo pairing link (relay — no public port needed)
 	@./scripts/pair.sh
+
+new-daemon: ## Add an isolated daemon (make new-daemon N=acme [P=6770])
+	@./scripts/new-daemon.sh $(N) $(P)
+
+router-tunnel: ## Temporarily expose the 9router dashboard (no auth; ctrl-C closes)
+	@./scripts/router-tunnel.sh
 
 satellites: ## Start extra Paseo daemons sharing the same 9router pool
 	$(DC) --profile satellites up -d

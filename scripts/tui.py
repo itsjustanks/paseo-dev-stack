@@ -260,6 +260,8 @@ class State:
         self.auth = {}                   # tool -> 'ok'|'no'|'?'|'--'
         self.tunnels = {"quick": "", "named": "", "vscode": ""}
         self.guards = {"lines": [], "log": []}
+        self.admin = {"version": "?", "image": "?", "latest": "", "update": "",
+                      "daemons": [], "router": {}}
         self.busy = set()                # names of in-flight collectors
         self.notes = deque(maxlen=200)   # activity log shown in the footer/help
         self.stamps = {}                 # collector -> last successful epoch
@@ -604,6 +606,77 @@ def collect_guards():
         ST.guards = {"lines": lines, "log": log or ["(no reaps logged yet)"]}
 
 
+def collect_admin():
+    """Versions, every Paseo daemon on this host, and 9router reachability.
+
+    Deliberately cheap and network-light: the GitHub check is the only remote
+    call and it is allowed to fail silently (an offline box must still show the
+    rest of the panel).
+    """
+    info = {"version": "?", "image": "?", "latest": "", "update": "",
+            "daemons": [], "router": {}}
+
+    # what this checkout claims to be
+    vf = os.path.join(ROOT, "VERSION")
+    if os.path.exists(vf):
+        try:
+            info["version"] = open(vf).read().strip()
+        except OSError:
+            pass
+    rc, out = sh(["git", "-C", ROOT, "describe", "--tags", "--always", "--dirty"], timeout=8)
+    if rc == 0 and out.strip():
+        info["commit"] = clean(out.strip())
+
+    # what the RUNNING image is — the authoritative answer for a pulled image
+    rc, out = sh(["docker", "compose", "exec", "-T", "--user", "paseo", "paseo",
+                  "printenv", "PDS_VERSION"], timeout=12)
+    info["image"] = clean(out.strip()) if rc == 0 and out.strip() else "not running"
+
+    # latest release. GitHub returns SINGLE-LINE json, so match key AND value.
+    rc, out = sh(["curl", "-fsSL", "--max-time", "8",
+                  "https://api.github.com/repos/itsjustanks/paseo-dev-stack/releases/latest"],
+                 timeout=12)
+    if rc == 0:
+        m = re.search(r'"tag_name"\s*:\s*"([^"]+)"', out)
+        if m:
+            info["latest"] = m.group(1)
+            cur = info["version"].lstrip("v")
+            if info["latest"].lstrip("v") != cur:
+                info["update"] = f"update available: {info['latest']}"
+
+    # every paseo daemon on this host, including satellites
+    rc, out = sh(["docker", "ps", "--format", "{{.Names}}\t{{.Status}}\t{{.Ports}}"], timeout=12)
+    if rc == 0:
+        for line in out.splitlines():
+            parts = line.split("\t")
+            if len(parts) < 2 or "paseo" not in parts[0] or "9router" in parts[0]:
+                continue
+            name, status = parts[0], parts[1]
+            ports = parts[2] if len(parts) > 2 else ""
+            m = re.search(r"127\.0\.0\.1:(\d+)->6767", ports)
+            hostn = ""
+            rc2, o2 = sh(["docker", "exec", name, "hostname"], timeout=8)
+            if rc2 == 0:
+                hostn = clean(o2.strip())
+            info["daemons"].append({
+                "container": name, "status": status,
+                "port": m.group(1) if m else "-", "name": hostn or "?",
+            })
+
+    # 9router: reachable, and is anything routed through it
+    rc, out = sh(["docker", "compose", "exec", "-T", "--user", "paseo", "paseo",
+                  "bash", "-lc",
+                  "curl -s -o /dev/null -w '%{http_code}' http://9router:20128/api/health"],
+                 timeout=12)
+    info["router"]["health"] = clean(out.strip()) if rc == 0 else "000"
+    envd = load_env()
+    info["router"]["port"] = envd.get("NINEROUTER_PORT") or "20128"
+    info["router"]["key"] = "set" if envd.get("NINEROUTER_KEY") else "not set"
+
+    with ST.lock:
+        ST.admin = info
+
+
 # ══ collector scheduling ═════════════════════════════════════════════════════
 
 COLLECTORS = [
@@ -615,6 +688,7 @@ COLLECTORS = [
     ("auth", collect_auth, 25.0),
     ("tunnels", collect_tunnels, 12.0),
     ("guards", collect_guards, 20.0),
+    ("admin", collect_admin, 45.0),
 ]
 
 _stop = threading.Event()
@@ -833,7 +907,7 @@ def init_colors():
 
 
 class UI:
-    TABS = ["status", "memory", "auth", "tunnels", "logs", "doctor", "guards"]
+    TABS = ["status", "memory", "auth", "tunnels", "logs", "doctor", "guards", "admin"]
 
     def __init__(self, stdscr):
         self.scr = stdscr
@@ -1232,13 +1306,80 @@ class UI:
                      C_DIM, dim=True)
         return y + 1
 
+    def tab_admin(self, y):
+        h, w = self.scr.getmaxyx()
+        with ST.lock:
+            a = dict(ST.admin)
+
+        self.put(y, 2, "VERSION", C_HEAD, bold=True); y += 1
+        self.put(y, 4, f"repo   {a.get('version','?')}", C_TEXT)
+        if a.get("commit"):
+            self.put(y, 26, f"({a['commit']})", C_DIM, dim=True)
+        y += 1
+        self.put(y, 4, f"image  {a.get('image','?')}", C_TEXT); y += 1
+        if a.get("latest"):
+            if a.get("update"):
+                self.put(y, 4, a["update"], C_WARN, bold=True)
+            else:
+                self.put(y, 4, f"latest {a['latest']}  (up to date)", C_OK)
+            y += 1
+        y += 1
+
+        self.put(y, 2, "DAEMONS ON THIS HOST", C_HEAD, bold=True)
+        self.put(y, 26, "each is isolated: own state, workspace and pairing identity",
+                 C_DIM, dim=True)
+        y += 2
+        ds = a.get("daemons", [])
+        if not ds:
+            self.put(y, 4, "none running", C_DIM, dim=True); y += 1
+        for i, d in enumerate(ds):
+            sel = (i == self.sel and self.TABS[self.tab] == "admin")
+            up = "Up" in d.get("status", "")
+            self.put(y, 2, "▸" if sel else " ", C_KEY, bold=True)
+            self.put(y, 4, "●" if up else "○", C_OK if up else C_BAD)
+            self.put(y, 6, d.get("name", "?")[:20].ljust(21), C_TEXT, bold=sel)
+            self.put(y, 28, f":{d.get('port','-')}".ljust(8), C_KEY)
+            self.put(y, 37, d.get("status", "")[:30], C_DIM, dim=True)
+            self.put(y, 69, d.get("container", "")[:w - 71], C_DIM, dim=True)
+            y += 1
+        y += 1
+
+        r = a.get("router", {})
+        self.put(y, 2, "9ROUTER", C_HEAD, bold=True); y += 1
+        okr = r.get("health") == "200"
+        self.put(y, 4, "●" if okr else "○", C_OK if okr else C_BAD)
+        self.put(y, 6, "reachable from the agent container" if okr
+                 else f"NOT reachable (http {r.get('health','?')})",
+                 C_TEXT if okr else C_BAD)
+        y += 1
+        self.put(y, 6, f"api key {r.get('key','?')}", C_DIM, dim=True); y += 1
+        self.put(y, 6, f"dashboard http://127.0.0.1:{r.get('port','20128')}/dashboard",
+                 C_KEY); y += 2
+
+        self.hline(y); y += 1
+        if self.stream:
+            return self.tab_stream(y, "", [])
+
+        for key, desc in (
+            ("Enter", "check for updates (dry run — shows what would change)"),
+            ("U", "apply the update: pull, merge new .env keys, rebuild, restart"),
+            ("N", "new daemon — adds an isolated satellite for another tenant"),
+            ("S", "start the satellite daemons defined in .env"),
+            ("D", "9router dashboard over a tunnel (reachable from anywhere)"),
+            ("p", "pairing link for the selected daemon"),
+        ):
+            self.put(y, 2, key, C_KEY, bold=True)
+            self.put(y, 8, desc, C_DIM, dim=True)
+            y += 1
+        return y
+
     def draw_help(self):
         h, w = self.scr.getmaxyx()
         box = [
             "",
             "  devstack control panel",
             "",
-            "  Tab / 1-7      switch tab            ↑ ↓ / j k    move the row cursor",
+            "  Tab / 1-8      switch tab            ↑ ↓ / j k    move the row cursor",
             "  R              force-refresh everything",
             "  Q or ctrl-C    quit (background containers keep running)",
             "",
@@ -1255,6 +1396,10 @@ class UI:
             "           c print URLs plainly so the terminal can copy them",
             "",
             "  logs     s pick a service   f follow/pause   PgUp/PgDn scroll   x stop",
+            "",
+            "  admin    Enter check for updates      U apply the update",
+            "           N new isolated daemon        S start the satellites",
+            "           D 9router dashboard tunnel   p pairing link for the selected",
             "",
             "  Interactive programs (logins, shells, vscode tunnel) take the whole",
             "  terminal: the panel suspends, they get the real tty, and the panel",
@@ -1299,6 +1444,8 @@ class UI:
                 ])
             elif name == "guards":
                 self.tab_guards(y)
+            elif name == "admin":
+                self.tab_admin(y)
         except curses.error:
             pass                      # a resize mid-draw; the next frame is fine
         self.footer()
@@ -1663,6 +1810,58 @@ class Actions:
                 return True
             if ch == "i" and not IS_MAC:
                 self.interactive_raw()
+                return True
+
+        # admin ----------------------------------------------------------------
+        if tab == "admin":
+            with ST.lock:
+                daemons = list(ST.admin.get("daemons", []))
+                router = dict(ST.admin.get("router", {}))
+
+            if key in (curses.KEY_ENTER, 10, 13):
+                self.stream_raw(["bash", os.path.join(ROOT, "scripts", "update.sh")],
+                                "checking for updates (dry run)")
+                return True
+
+            if ch == "U":
+                # Applying an update rebuilds and restarts, so confirm first —
+                # containers go down for a minute. Volumes are never touched.
+                ui.confirm = (
+                    "apply the update? rebuilds and restarts (credentials are kept)",
+                    lambda: self.stream_raw(
+                        ["bash", os.path.join(ROOT, "scripts", "update.sh"), "--apply"],
+                        "updating"))
+                return True
+
+            if ch == "S":
+                c = self.compose("--profile", "satellites", "up", "-d")
+                if c:
+                    self.stream_raw(c, "starting satellite daemons")
+                return True
+
+            if ch == "N":
+                # A new tenant is a new satellite: its own volume, workspace,
+                # port and pairing identity. The script edits .env and brings it
+                # up, and it needs a name, so hand over the terminal.
+                handoff(["bash", os.path.join(ROOT, "scripts", "new-daemon.sh")],
+                        "── add a daemon ──")
+                refresh_all()
+                return True
+
+            if ch == "D":
+                port = router.get("port", "20128")
+                handoff(["bash", "-lc",
+                         f"cd {shlex.quote(ROOT)} && "
+                         f"bash scripts/router-tunnel.sh {shlex.quote(str(port))}"],
+                        "── 9router dashboard tunnel ──")
+                refresh_all()
+                return True
+
+            if ch == "p" and daemons:
+                d = daemons[min(ui.sel, len(daemons) - 1)]
+                handoff(["docker", "exec", "-it", "--user", "paseo", d["container"],
+                         "paseo", "daemon", "pair", "--relay"],
+                        f"── pairing link for {d.get('name', d['container'])} ──")
                 return True
         return False
 
