@@ -281,10 +281,18 @@ RUN set -eux; \
 # `paseo plugin add` writes into ~/.paseo, which is on the volume.
 ARG PLUGIN_9ROUTER_REPO=https://github.com/itsjustanks/paseo-plugin-9router
 ARG PLUGIN_9ROUTER_REF=main
-RUN git clone --depth 1 -b "$PLUGIN_9ROUTER_REF" "$PLUGIN_9ROUTER_REPO" \
-      /opt/paseo-plugins/9router \
-    && rm -rf /opt/paseo-plugins/9router/.git \
-    && chmod -R a+rX /opt/paseo-plugins
+RUN set -eux; \
+    git clone --depth 1 -b "$PLUGIN_9ROUTER_REF" "$PLUGIN_9ROUTER_REPO" \
+      /opt/paseo-plugins/9router; \
+    rm -rf /opt/paseo-plugins/9router/.git; \
+    # The plugin is TypeScript with devDependencies (react, zod, @getpaseo/*).
+    # Without node_modules the daemon cannot load it — it registers and then
+    # sits at STATUS=disabled with nothing in `paseo plugin logs`. Install at
+    # BUILD time so a fresh container needs no network and no manual step.
+    if [ -f /opt/paseo-plugins/9router/apps/paseo/package.json ]; then \
+      (cd /opt/paseo-plugins/9router/apps/paseo && npm install --no-audit --no-fund --silent); \
+    fi; \
+    chmod -R a+rX /opt/paseo-plugins
 
 COPY docker/paseo/stream-bridge.py       /usr/local/bin/stream-bridge.py
 COPY docker/paseo/register-plugins.sh    /usr/local/bin/register-plugins.sh

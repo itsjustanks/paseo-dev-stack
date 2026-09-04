@@ -92,7 +92,11 @@ plugs="$($DC exec -T --user paseo paseo bash -lc \
 if [ -n "$plugs" ]; then
   while read -r pid pstate; do
     [ -n "$pid" ] || continue
-    ok "plugin: $pid ($pstate)"
+    case "$pstate" in
+      running) ok "plugin: $pid (running)" ;;
+      *)       bad "plugin: $pid is '$pstate' — registered but not loaded"
+               note "usually: pluginsEnabled is false, or node_modules is missing" ;;
+    esac
   done <<< "$plugs"
 else
   copied="$($DC exec -T --user paseo paseo bash -lc \
@@ -102,6 +106,22 @@ else
     note "fix: docker compose exec --user paseo paseo /usr/local/bin/register-plugins.sh"
   else note "no plugins"; fi
 fi
+
+# The daemon defaults pluginsEnabled to FALSE; a plugin then registers but never
+# loads, and `paseo plugin reload` answers "Plugins are globally disabled".
+pe="$($DC exec -T --user paseo paseo bash -lc \
+  'python3 -c "import json,os;print(json.load(open(os.path.expanduser(\"~/.paseo/config.json\"))).get(\"pluginsEnabled\"))"' 2>/dev/null | tr -d '\r')"
+[ "$pe" = True ] && ok "pluginsEnabled=true" \
+                 || bad "pluginsEnabled=$pe — plugins will never load"
+
+echo "── project root ──"
+pr="$($DC exec -T --user paseo paseo bash -lc \
+  'python3 -c "import json,os;print(json.load(open(os.path.expanduser(\"~/.paseo/config.json\"))).get(\"projectRoot\") or \"\")"' 2>/dev/null | tr -d '\r')"
+case "$pr" in
+  /workspace*) ok "projectRoot=$pr (bind-mounted, visible on the host)" ;;
+  "")          bad "projectRoot unset — new projects default to \$HOME, which is INSIDE the volume and invisible on the host" ;;
+  *)           note "projectRoot=$pr (not the bind mount — files will not appear on the host)" ;;
+esac
 
 echo "── daemon identity ──"
 hn="$($DC exec -T --user paseo paseo bash -lc 'hostname' 2>/dev/null | tr -d '\r')"

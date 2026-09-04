@@ -123,6 +123,44 @@ if [ -x /usr/local/bin/stream-bridge.py ]; then
   log "stream bridge on :${AGENT_BROWSER_STREAM_BRIDGE_PORT:-9224}"
 fi
 
+# ── Daemon defaults ─────────────────────────────────────────────────────────
+# Two settings a container install needs that the daemon does not default to:
+#
+#   pluginsEnabled — defaults to FALSE (bootstrap.js: `config.pluginsEnabled ??
+#     false`). Without it every plugin registers but sits at STATUS=disabled and
+#     `paseo plugin reload` answers "Plugins are globally disabled". Since this
+#     image ships a plugin, the container turns it on.
+#
+#   projectRoot — Paseo otherwise offers $HOME for new projects, which inside a
+#     container is the /home/paseo VOLUME: invisible from the host, not in any
+#     backup, and confusing when a terminal opens somewhere you cannot see.
+#     /workspace is the bind mount, so that is where projects belong.
+#
+# Both are only applied when ABSENT — an explicit choice is never overwritten.
+CFG="$HOME_DIR/.paseo/config.json"
+run_as_paseo mkdir -p "$(dirname "$CFG")"
+[ -f "$CFG" ] || run_as_paseo tee "$CFG" >/dev/null <<'JSON'
+{}
+JSON
+run_as_paseo python3 - "$CFG" <<'PY' || log "could not apply daemon defaults"
+import json, os, sys
+p = sys.argv[1]
+try:
+    d = json.load(open(p))
+except Exception:
+    d = {}
+changed = []
+if "pluginsEnabled" not in d:
+    d["pluginsEnabled"] = True; changed.append("pluginsEnabled=true")
+if not d.get("projectRoot"):
+    d["projectRoot"] = "/workspace"; changed.append("projectRoot=/workspace")
+if changed:
+    tmp = p + ".tmp"
+    json.dump(d, open(tmp, "w"), indent=2)
+    os.replace(tmp, p)          # atomic: a crash mid-write cannot truncate it
+    print("daemon defaults: " + ", ".join(changed))
+PY
+
 # ── Paseo plugins ───────────────────────────────────────────────────────────
 # Plugins are vendored in the image but must be REGISTERED into ~/.paseo, which
 # lives on the volume — so this runs at boot, not build.
