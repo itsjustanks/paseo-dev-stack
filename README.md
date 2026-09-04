@@ -266,10 +266,20 @@ The `.env` merge only **appends keys you do not have**; your existing values
 are never rewritten, including ones containing `=`, `#`, or spaces. Docker
 volumes are never touched, so agent logins survive every update.
 
-Releases publish a prebuilt amd64 image to
-`ghcr.io/itsjustanks/paseo-dev-stack`. arm64 builds locally instead — several
-agent installers ship glibc amd64 binaries, so an emulated arm64 image would be
-slow to build and broken to run.
+Releases publish a prebuilt image to `ghcr.io/itsjustanks/paseo-dev-stack`.
+
+> **First release only:** GHCR packages are created **private**. After the first
+> tag, make it public at
+> `github.com/users/itsjustanks/packages/container/paseo-dev-stack/settings`
+> → *Change visibility* → Public. Until then `docker pull` fails for everyone
+> (including you, without a token), and the stack silently falls back to
+> building locally — which still works, just slower.
+
+Both `linux/amd64` and `linux/arm64` are built, each on a **native** runner and
+then merged into one manifest — not via QEMU emulation. The image installs five
+agent CLIs from `curl | bash` installers plus an `npm install -g`; emulated,
+every one of those runs interpreted and the build goes from ~10 minutes to over
+an hour.
 
 ## Commands
 
