@@ -84,9 +84,24 @@ fi
 # is now the volume — so link the baked copy into place rather than re-downloading
 # ~150MB per container.
 BAKED_AB=/opt/agent-home/.agent-browser
-if [ -d "$BAKED_AB/browsers" ] && [ ! -e "$HOME_DIR/.agent-browser" ]; then
-  run_as_paseo ln -s "$BAKED_AB" "$HOME_DIR/.agent-browser"
+# agent-browser needs a WRITABLE .agent-browser (it puts its control socket
+# there), so a bare symlink to the read-only baked copy fails with
+# "Socket directory is not writable". Make a real directory owned by paseo and
+# link only the browsers/ payload into it.
+if [ ! -e "$HOME_DIR/.agent-browser" ] && [ -d "$BAKED_AB/browsers" ]; then
+  run_as_paseo mkdir -p "$HOME_DIR/.agent-browser"
+  run_as_paseo ln -s "$BAKED_AB/browsers" "$HOME_DIR/.agent-browser/browsers"
   log "linked prebuilt Chrome into $HOME_DIR/.agent-browser"
+fi
+# Anything root created under the volume (build-time installers, docker cp)
+# leaves paseo unable to read its own config. Fix only the top level of $HOME
+# plus the dirs we manage — a recursive chown of the whole volume would be slow
+# and would rewrite user data on every boot.
+if [ "$(id -u)" = "0" ]; then
+  for d in "$HOME_DIR/.agent-browser" "$HOME_DIR/.fly" "$HOME_DIR/.claude" \
+           "$HOME_DIR/.codex" "$HOME_DIR/.paseo" "$HOME_DIR/.config"; do
+    [ -e "$d" ] && [ "$(stat -c %u "$d")" != "1000" ] && chown -R paseo:paseo "$d" || true
+  done
 fi
 [ -f /opt/chrome-path ] && export AGENT_BROWSER_EXECUTABLE_PATH="$(cat /opt/chrome-path)"
 

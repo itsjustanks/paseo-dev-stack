@@ -112,7 +112,13 @@ RUN set -eux; \
     ln -sf /usr/local/flyctl/bin/flyctl /usr/local/bin/flyctl; \
     ln -sf /usr/local/flyctl/bin/flyctl /usr/local/bin/fly; \
     chmod -R a+rX /usr/local/flyctl; \
-    flyctl version
+    flyctl version; \
+    # flyctl creates $HOME/.fly on first run — as root, under the /home/paseo
+    # VOLUME path. Left there it is baked into the image root-owned, and the
+    # runtime chown only fixes the mountpoint itself, so `paseo` then gets
+    # "permission denied" reading its own config. Remove it; flyctl recreates
+    # it correctly on first use as the right user.
+    rm -rf /home/paseo/.fly /root/.fly || true
 
 # ── GitHub CLI ──────────────────────────────────────────────────────────────
 RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
