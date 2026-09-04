@@ -316,8 +316,29 @@ model list. Pin a version with `--build-arg PLUGIN_9ROUTER_REF=v1.2.3`.
 ## The control panel
 
 ```bash
-make tui
+pds            # from anywhere, as any user — including root
+make tui       # from inside the repo
 ```
+
+`pds` is installed to `/usr/local/bin`. It finds the deployment, then
+re-executes as the user that owns it — so running it as root does **not**
+create root-owned files, which is the usual way this kind of stack breaks
+(the daemon runs as uid 1000 and then cannot read its own state).
+
+Seven tabs, switched with `1`-`7` or `Tab`:
+
+| | Tab | What you do there |
+|---|---|---|
+| `1` | status | services, health, ports; `u` up, `d` down, `r` restart, `l` logs, `s` shell |
+| `2` | memory | host + container memory, dev servers; `K` kill one, `g` guards |
+| `3` | auth | which agent CLIs are logged in; `Enter` one, `A` all of them |
+| `4` | tunnels | `q` quick, `n` named, `v` vscode, `c` copy URL, `x` stop |
+| `5` | logs | live tail; `f` follow, `s` pick service |
+| `6` | doctor | full verification, run in place |
+| `7` | guards | memory-guard timers and recent reaps |
+
+`?` shows every key. Interactive actions (agent logins, shells) hand the
+terminal to the real program and take it back cleanly on exit.
 
 One screen for the whole stack: live service health, host and per-container
 memory, running dev servers, public tunnel URLs, and single-key actions for

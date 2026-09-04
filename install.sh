@@ -211,16 +211,31 @@ cat <<BANNER
      9router : http://127.0.0.1:$(grep -E '^NINEROUTER_PORT=' .env | cut -d= -f2 || echo 20128)
      creds   : /root/paseo-dev-stack-credentials.txt
 
-  Reach it from your laptop (no public port is open):
-     ssh -N -L 6767:127.0.0.1:6767 ${DEVSTACK_USER}@<this-host>
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │  START HERE                                                         │
+  │                                                                     │
+  │      pds                                                            │
+  │                                                                     │
+  │  An interactive panel for everything: service health, memory,       │
+  │  agent logins, tunnels, pairing links and logs. Works whether you   │
+  │  are root or ${DEVSTACK_USER} — it always runs as the right user.   │
+  └─────────────────────────────────────────────────────────────────────┘
 
-  Or expose it properly:
+  Next steps, in order:
+
+     pds                        1. open the panel
+       press 3, then A          2. log in to every agent CLI (interactive)
+       press 4, then q          3. get a public URL (quick tunnel)
+       press 6                  4. run doctor and read the result
+       press ? any time         for the full key list
+
+  Prefer commands? Every panel action has one:
+
      cd ${DEVSTACK_DIR}
-     make quick-tunnel          # throwaway URL, no account, NO AUTH
-     make tunnel                # named Cloudflare tunnel (set TUNNEL_TOKEN first)
-     make code-tunnel           # VS Code dev tunnel -> vscode.dev
+     make auth-all              log in to each agent CLI
+     make pair                  Paseo pairing link (no public port needed)
+     make quick-tunnel          throwaway public URL, no account, NO AUTH
+     make doctor                verify everything
+     make help                  the full list
 
-  Then:
-     make auth-all              # log in to each agent CLI
-     make doctor                # verify everything
 BANNER
