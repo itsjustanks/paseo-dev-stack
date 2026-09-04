@@ -127,9 +127,9 @@ echo "── shell environment ──"
 # /home/paseo is a volume, so /etc/skel's dotfiles are shadowed. Without them a
 # Paseo terminal opens with a bare "$" and no history/colours.
 if $DC exec -T --user paseo paseo test -f /home/paseo/.bashrc 2>/dev/null; then
-  ok "~/.bashrc present (terminals get a proper prompt)"
+  ok "/home/paseo/.bashrc present (terminals get a proper prompt)"
 else
-  bad "~/.bashrc MISSING — terminals will show a bare '\$' with no colours"
+  bad "/home/paseo/.bashrc MISSING — terminals show a bare prompt, no colours"
   note "the entrypoint seeds it from /etc/skel on boot; rebuild to apply"
 fi
 
