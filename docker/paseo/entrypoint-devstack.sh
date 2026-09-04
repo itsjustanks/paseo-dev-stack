@@ -81,6 +81,20 @@ if [ -d "$BAKED_AB/browsers" ] && [ ! -e "$HOME_DIR/.agent-browser" ]; then
 fi
 [ -f /opt/chrome-path ] && export AGENT_BROWSER_EXECUTABLE_PATH="$(cat /opt/chrome-path)"
 
+# ── agent-browser stream bridge ─────────────────────────────────────────────
+# agent-browser binds its live-view WebSocket to the container's 127.0.0.1 with
+# no bind-address option, so Docker cannot publish it directly. This forwards
+# 0.0.0.0:<bridge port> -> 127.0.0.1:<stream port> inside the container. The
+# HOST-side port is still bound to 127.0.0.1 by compose, so nothing is public.
+if [ -x /usr/local/bin/stream-bridge.py ]; then
+  run_as_paseo env \
+    AGENT_BROWSER_STREAM_PORT="${AGENT_BROWSER_STREAM_PORT:-9223}" \
+    AGENT_BROWSER_STREAM_BRIDGE_PORT="${AGENT_BROWSER_STREAM_BRIDGE_PORT:-9224}" \
+    nohup python3 /usr/local/bin/stream-bridge.py \
+      >> "$HOME_DIR/.agent-browser-bridge.log" 2>&1 &
+  log "stream bridge on :${AGENT_BROWSER_STREAM_BRIDGE_PORT:-9224}"
+fi
+
 # ── Paseo plugins ───────────────────────────────────────────────────────────
 # Plugins are vendored in the image but must be registered into ~/.paseo, which
 # lives on the volume — so this runs at boot, not build. Idempotent.

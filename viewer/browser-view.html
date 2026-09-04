@@ -1,0 +1,144 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>agent-browser live view</title>
+<style>
+  :root { color-scheme: dark; --bg:#0b0d10; --fg:#e6e9ef; --dim:#8b94a7; --ok:#3ddc97; --bad:#ff5c6c; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font:14px/1.5 ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif;
+         display:flex; flex-direction:column; height:100vh; }
+  header { display:flex; gap:12px; align-items:center; padding:10px 14px;
+           border-bottom:1px solid #1d222b; flex-wrap:wrap; }
+  h1 { font-size:14px; font-weight:600; margin:0; letter-spacing:.02em; }
+  .dot { width:8px; height:8px; border-radius:50%; background:var(--bad); flex:none; }
+  .dot.on { background:var(--ok); }
+  input, button { background:#151a22; color:var(--fg); border:1px solid #262d39;
+                  border-radius:6px; padding:6px 10px; font:inherit; }
+  button { cursor:pointer; } button:hover { border-color:#3a4454; }
+  .stats { margin-left:auto; color:var(--dim); font-variant-numeric:tabular-nums;
+           font-size:12px; white-space:nowrap; }
+  #stage { flex:1; display:grid; place-items:center; overflow:auto; padding:12px; }
+  /* The frame is a JPEG of the remote viewport. Clicks are mapped back to page
+     coordinates, so this is genuinely interactive, not a screenshot feed. */
+  #frame { max-width:100%; max-height:100%; cursor:crosshair; display:none;
+           border-radius:8px; box-shadow:0 8px 40px #0008; }
+  #msg { color:var(--dim); text-align:center; max-width:52ch; }
+  code { background:#151a22; padding:2px 6px; border-radius:4px; font-size:12px; }
+  kbd { background:#1d222b; border:1px solid #2b3341; border-bottom-width:2px;
+        border-radius:4px; padding:1px 5px; font-size:11px; }
+</style>
+
+<header>
+  <span class="dot" id="dot"></span>
+  <h1>agent-browser</h1>
+  <input id="url" size="26" value="ws://127.0.0.1:9223">
+  <button id="go">connect</button>
+  <label style="color:var(--dim);font-size:12px">
+    <input type="checkbox" id="interact" checked style="vertical-align:-1px"> interact
+  </label>
+  <span class="stats" id="stats">—</span>
+</header>
+
+<div id="stage">
+  <img id="frame" alt="remote viewport">
+  <div id="msg">
+    Not connected.<br><br>
+    On the server the stream is bound to localhost only, so tunnel it first:<br>
+    <code>ssh -N -L 9223:127.0.0.1:9223 paseo@&lt;host&gt;</code><br><br>
+    Then start a session: <code>agent-browser open example.com</code><br>
+    and press <kbd>connect</kbd>.
+  </div>
+</div>
+
+<script>
+// The agent-browser stream is a WebSocket that emits {type:"frame", data:<base64 jpeg>,
+// metadata:{deviceWidth,deviceHeight,...}} and accepts input events back.
+const $ = id => document.getElementById(id);
+let ws = null, frames = 0, bytes = 0, last = performance.now(), meta = null;
+
+function setLive(on, note) {
+  $('dot').classList.toggle('on', on);
+  $('frame').style.display = on ? 'block' : 'none';
+  $('msg').style.display = on ? 'none' : 'block';
+  if (note) $('msg').innerHTML = note;
+}
+
+function connect() {
+  if (ws) { try { ws.close(); } catch {} ws = null; }
+  const url = $('url').value.trim();
+  setLive(false, 'Connecting to <code>' + url + '</code> …');
+  try { ws = new WebSocket(url); } catch (e) {
+    return setLive(false, 'Bad URL: ' + e.message);
+  }
+
+  ws.onopen = () => { frames = 0; bytes = 0; setLive(true); };
+  ws.onclose = ev => setLive(false,
+    'Disconnected (code ' + ev.code + ').<br><br>' +
+    'Is a session open? <code>agent-browser open example.com</code><br>' +
+    'Is the tunnel up? <code>ssh -N -L 9223:127.0.0.1:9223 paseo@&lt;host&gt;</code>');
+  ws.onerror = () => setLive(false,
+    'Connection failed. The port is bound to 127.0.0.1 on the server — ' +
+    'you need the SSH tunnel above.');
+
+  ws.onmessage = ev => {
+    let m; try { m = JSON.parse(ev.data); } catch { return; }
+    if (m.type !== 'frame' || !m.data) return;
+    meta = m.metadata || meta;
+    $('frame').src = 'data:image/jpeg;base64,' + m.data;
+    frames++; bytes += m.data.length * 0.75;   // base64 -> bytes
+    const now = performance.now();
+    if (now - last > 1000) {
+      const fps = frames / ((now - last) / 1000);
+      $('stats').textContent =
+        fps.toFixed(1) + ' fps · ' + (bytes / 1024 / ((now - last) / 1000)).toFixed(0) + ' KB/s' +
+        (meta ? ' · ' + meta.deviceWidth + '×' + meta.deviceHeight : '');
+      frames = 0; bytes = 0; last = now;
+    }
+  };
+}
+
+// Map a click on the scaled <img> back to real page coordinates. Without this
+// correction every click lands in the wrong place on a resized window.
+function pagePoint(ev) {
+  const img = $('frame'), r = img.getBoundingClientRect();
+  const w = meta?.deviceWidth  || img.naturalWidth;
+  const h = meta?.deviceHeight || img.naturalHeight;
+  return {
+    x: Math.round((ev.clientX - r.left) / r.width  * w),
+    y: Math.round((ev.clientY - r.top)  / r.height * h),
+  };
+}
+
+function send(o) {
+  if (ws && ws.readyState === 1 && $('interact').checked) ws.send(JSON.stringify(o));
+}
+
+$('frame').addEventListener('mousedown', e => {
+  const p = pagePoint(e);
+  send({ type: 'input', event: 'mousePressed',  x: p.x, y: p.y, button: 'left', clickCount: 1 });
+  send({ type: 'input', event: 'mouseReleased', x: p.x, y: p.y, button: 'left', clickCount: 1 });
+  e.preventDefault();
+});
+$('frame').addEventListener('wheel', e => {
+  const p = pagePoint(e);
+  send({ type: 'input', event: 'mouseWheel', x: p.x, y: p.y,
+         deltaX: e.deltaX, deltaY: e.deltaY });
+  e.preventDefault();
+}, { passive: false });
+window.addEventListener('keydown', e => {
+  if (document.activeElement === $('url')) return;
+  send({ type: 'input', event: 'keyDown', key: e.key, code: e.code });
+  if (e.key.length === 1) send({ type: 'input', event: 'char', text: e.key });
+});
+window.addEventListener('keyup', e => {
+  if (document.activeElement === $('url')) return;
+  send({ type: 'input', event: 'keyUp', key: e.key, code: e.code });
+});
+
+$('go').onclick = connect;
+$('url').addEventListener('keydown', e => { if (e.key === 'Enter') connect(); });
+
+// Allow ?ws=... so `make browser-view` can hand over a preconfigured URL.
+const q = new URLSearchParams(location.search).get('ws');
+if (q) { $('url').value = q; connect(); }
+</script>

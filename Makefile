@@ -8,7 +8,7 @@ DC    := docker compose
         code-tunnel code-tunnel-bg code-tunnel-url \
         tunnel quick-tunnel tunnel-url router memory-push memory-pull \
         guards guards-status guards-dry mem \
-        browser-test clean nuke
+        browser-open browser-stream browser-view browser-test clean nuke
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -149,6 +149,18 @@ mem: ## Show memory pressure: host, container, and any dev servers
 # ── Checks ──────────────────────────────────────────────────────────────────
 doctor: ## Verify every tool inside the container
 	@./scripts/doctor.sh
+
+# ── Remote browser viewing ──────────────────────────────────────────────────
+browser-open: ## Open a URL in the headless browser (make browser-open U=https://...)
+	@test -n "$(U)" || { echo "usage: make browser-open U=https://example.com"; exit 1; }
+	$(DC) exec -T --user paseo paseo bash -lc 'agent-browser open "$(U)"'
+	@$(MAKE) --no-print-directory browser-stream
+
+browser-stream: ## Show the agent-browser live stream port and how to reach it
+	@port=$$(grep -E '^AGENT_BROWSER_STREAM_PORT=' .env 2>/dev/null | cut -d= -f2); 	 port=$${port:-9223}; 	 $(DC) exec -T --user paseo paseo bash -lc 'agent-browser stream status' 2>/dev/null || true; 	 echo; echo "  stream: ws://127.0.0.1:$$port  (bound to localhost on the host)"; 	 echo "  from another machine, tunnel it first:"; 	 echo "    ssh -N -L $$port:127.0.0.1:$$port $${DEVSTACK_USER:-paseo}@<this-host>"; 	 echo "  then open viewer/browser-view.html (or: make browser-view)"
+
+browser-view: ## Open the live browser viewer in your local web browser
+	@port=$$(grep -E '^AGENT_BROWSER_STREAM_PORT=' .env 2>/dev/null | cut -d= -f2); 	 port=$${port:-9223}; 	 url="file://$$(pwd)/viewer/browser-view.html?ws=ws://127.0.0.1:$$port"; 	 (open "$$url" 2>/dev/null || xdg-open "$$url" 2>/dev/null || echo "open: $$url")
 
 browser-test: ## Smoke-test headless agent-browser
 	$(DC) exec --user paseo paseo bash -lc \

@@ -176,9 +176,10 @@ RUN git clone --depth 1 -b "$PLUGIN_9ROUTER_REF" "$PLUGIN_9ROUTER_REPO" \
     && rm -rf /opt/paseo-plugins/9router/.git \
     && chmod -R a+rX /opt/paseo-plugins
 
+COPY docker/paseo/stream-bridge.py       /usr/local/bin/stream-bridge.py
 COPY docker/paseo/entrypoint-devstack.sh /usr/local/bin/entrypoint-devstack.sh
 COPY docker/paseo/agent-env.sh           /etc/profile.d/10-devstack-agents.sh
-RUN chmod +x /usr/local/bin/entrypoint-devstack.sh \
+RUN chmod +x /usr/local/bin/entrypoint-devstack.sh /usr/local/bin/stream-bridge.py \
     && chmod 0644 /etc/profile.d/10-devstack-agents.sh
 
 ENV PATH="/usr/local/bin:/home/paseo/.local/bin:${PATH}" \

@@ -21,6 +21,9 @@ services:
     restart: unless-stopped
     ports:
       - "127.0.0.1:${PASEO_PORT:-6767}:6767"
+      # agent-browser live viewport stream (WebSocket). Lets you watch what the
+      # headless browser sees from another machine — and click/type into it.
+      - "127.0.0.1:${AGENT_BROWSER_STREAM_PORT:-9223}:${AGENT_BROWSER_STREAM_BRIDGE_PORT:-9224}"
     environment:
       PASEO_PASSWORD: ${PASEO_PASSWORD:?PASEO_PASSWORD is required - copy .env.example to .env}
       PASEO_HOSTNAMES: ${PASEO_HOSTNAMES:-}
@@ -31,6 +34,16 @@ services:
       GH_TOKEN: ${GH_TOKEN:-}
       SUPABASE_ACCESS_TOKEN: ${SUPABASE_ACCESS_TOKEN:-}
       CURSOR_API_KEY: ${CURSOR_API_KEY:-}
+      # agent-browser streaming. The port MUST be pinned: the default is an
+      # OS-assigned ephemeral port, which cannot be published from a container.
+      AGENT_BROWSER_STREAM_PORT: ${AGENT_BROWSER_STREAM_PORT:-9223}
+      AGENT_BROWSER_STREAM_BRIDGE_PORT: ${AGENT_BROWSER_STREAM_BRIDGE_PORT:-9224}
+      AGENT_BROWSER_STREAM_QUALITY: ${AGENT_BROWSER_STREAM_QUALITY:-80}
+      AGENT_BROWSER_STREAM_MAX_WIDTH: ${AGENT_BROWSER_STREAM_MAX_WIDTH:-}
+      AGENT_BROWSER_STREAM_MAX_HEIGHT: ${AGENT_BROWSER_STREAM_MAX_HEIGHT:-}
+      # V8 heap for Node processes. Bounds the JS heap ONLY — Turbopack
+      # allocates natively and ignores this, which is why mem_limit exists too.
+      NODE_OPTIONS: ${NODE_OPTIONS:-}
     volumes:
       # Daemon state, agent configs, ALL credentials, auto-memory.
       - paseo-home:/home/paseo
