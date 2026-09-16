@@ -409,6 +409,13 @@ them.
 > 9router refuses remote logins while its password is the shipped default, and
 > in Docker every login is remote. Compose passes `NINEROUTER_PASSWORD` as
 > `INITIAL_PASSWORD` on first boot so the dashboard is reachable at all.
+>
+> `INITIAL_PASSWORD` only seeds an **empty** `ninerouter-data` volume. If you
+> restore or migrate an existing 9router data directory, the password stored in
+> it wins and `NINEROUTER_PASSWORD` is ignored — the four targets above then
+> fail to authenticate until you set it to the password that volume already
+> has. `make router` and `make router-tunnel` never log in, so they keep
+> working; `router-tunnel` prints this value as a display hint either way.
 
 ## Multiple daemons
 
