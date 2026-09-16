@@ -9,7 +9,7 @@
 name: paseo-dev-stack
 
 services:
-  paseo:
+  paseo: &paseo-common
     build:
       context: .
       dockerfile: docker/paseo/Dockerfile
@@ -79,7 +79,7 @@ services:
       - seccomp:unconfined   # lets headless Chromium sandbox properly
     depends_on:
       # Wait for the router to actually answer, not just to exist. The nine
-      # satellite services inherit this via `extends`.
+      # satellite services inherit this via the `paseo-common` anchor.
       9router:
         condition: service_healthy
     networks: [pds]
@@ -128,9 +128,28 @@ services:
   # They reach the router by SERVICE NAME (http://9router:20128), which does not
   # change with the public hostname. 9router itself is stock upstream — nothing
   # here modifies it.
+  #
+  # These merge the `paseo-common` anchor (`<<:`) rather than using `extends`.
+  # `extends` APPENDS to the parent's list fields instead of replacing them, so
+  # every satellite inherited the main daemon's 127.0.0.1:6767:6767 ALONGSIDE
+  # its own mapping — `compose config` showed paseo-5 publishing 6767, 9223,
+  # 6771 and 9228. The first satellite to start won 6767 and every other one
+  # died with "Bind for 127.0.0.1:6767 failed: port is already allocated", so
+  # satellites could never start together. The agent-browser stream port
+  # collided the same way. A YAML merge key REPLACES a key the child redefines,
+  # which is what `ports:` needs.
+  #
+  # `ports: !override` fixes it too, but only on Compose v2.24.4+ — older
+  # Compose parses the tag without error and merges anyway, so a box on the
+  # Engine 24 minimum this README documents would keep the bug with no warning.
+  # The merge key is handled by the YAML parser, so it behaves the same on every
+  # Compose 2.x.
+  #
+  # The flip side: a merge key replaces WHOLE keys, so anything a satellite
+  # redefines it must redefine completely — which is why the global-packages
+  # mount is repeated in each `volumes:` below rather than inherited.
   paseo-2:
-    extends:
-      service: paseo
+    <<: *paseo-common
     profiles: [satellites]
     container_name: pds-paseo-2
     hostname: ${PASEO_NAME_2:-paseo-2}
@@ -139,6 +158,7 @@ services:
       - "127.0.0.1:${AGENT_BROWSER_STREAM_PORT_2:-9225}:${AGENT_BROWSER_STREAM_BRIDGE_PORT:-9224}"
     volumes:
       - paseo-home-2:/home/paseo
+      - ${GLOBAL_PACKAGES_DIR:-./global-packages}:/opt/npm-global
       - ${WORKSPACE_DIR_2:-./workspace-2}:/workspace
       - ./config:/opt/devstack-seed:ro
       - ./memory:/opt/devstack-seed-memory:ro
@@ -146,8 +166,7 @@ services:
     memswap_limit: ${PASEO_MEMSWAP_LIMIT_2:-0}
 
   paseo-3:
-    extends:
-      service: paseo
+    <<: *paseo-common
     profiles: [satellites]
     container_name: pds-paseo-3
     hostname: ${PASEO_NAME_3:-paseo-3}
@@ -156,6 +175,7 @@ services:
       - "127.0.0.1:${AGENT_BROWSER_STREAM_PORT_3:-9226}:${AGENT_BROWSER_STREAM_BRIDGE_PORT:-9224}"
     volumes:
       - paseo-home-3:/home/paseo
+      - ${GLOBAL_PACKAGES_DIR:-./global-packages}:/opt/npm-global
       - ${WORKSPACE_DIR_3:-./workspace-3}:/workspace
       - ./config:/opt/devstack-seed:ro
       - ./memory:/opt/devstack-seed-memory:ro
@@ -163,8 +183,7 @@ services:
     memswap_limit: ${PASEO_MEMSWAP_LIMIT_3:-0}
 
   paseo-4:
-    extends:
-      service: paseo
+    <<: *paseo-common
     profiles: [satellites]
     container_name: pds-paseo-4
     hostname: ${PASEO_NAME_4:-paseo-4}
@@ -173,6 +192,7 @@ services:
       - "127.0.0.1:${AGENT_BROWSER_STREAM_PORT_4:-9227}:${AGENT_BROWSER_STREAM_BRIDGE_PORT:-9224}"
     volumes:
       - paseo-home-4:/home/paseo
+      - ${GLOBAL_PACKAGES_DIR:-./global-packages}:/opt/npm-global
       - ${WORKSPACE_DIR_4:-./workspace-4}:/workspace
       - ./config:/opt/devstack-seed:ro
       - ./memory:/opt/devstack-seed-memory:ro
@@ -180,8 +200,7 @@ services:
     memswap_limit: ${PASEO_MEMSWAP_LIMIT_4:-0}
 
   paseo-5:
-    extends:
-      service: paseo
+    <<: *paseo-common
     profiles: [satellites]
     container_name: pds-paseo-5
     hostname: ${PASEO_NAME_5:-paseo-5}
@@ -190,6 +209,7 @@ services:
       - "127.0.0.1:${AGENT_BROWSER_STREAM_PORT_5:-9228}:${AGENT_BROWSER_STREAM_BRIDGE_PORT:-9224}"
     volumes:
       - paseo-home-5:/home/paseo
+      - ${GLOBAL_PACKAGES_DIR:-./global-packages}:/opt/npm-global
       - ${WORKSPACE_DIR_5:-./workspace-5}:/workspace
       - ./config:/opt/devstack-seed:ro
       - ./memory:/opt/devstack-seed-memory:ro
@@ -197,8 +217,7 @@ services:
     memswap_limit: ${PASEO_MEMSWAP_LIMIT_5:-0}
 
   paseo-6:
-    extends:
-      service: paseo
+    <<: *paseo-common
     profiles: [satellites]
     container_name: pds-paseo-6
     hostname: ${PASEO_NAME_6:-paseo-6}
@@ -207,6 +226,7 @@ services:
       - "127.0.0.1:${AGENT_BROWSER_STREAM_PORT_6:-9229}:${AGENT_BROWSER_STREAM_BRIDGE_PORT:-9224}"
     volumes:
       - paseo-home-6:/home/paseo
+      - ${GLOBAL_PACKAGES_DIR:-./global-packages}:/opt/npm-global
       - ${WORKSPACE_DIR_6:-./workspace-6}:/workspace
       - ./config:/opt/devstack-seed:ro
       - ./memory:/opt/devstack-seed-memory:ro
@@ -214,8 +234,7 @@ services:
     memswap_limit: ${PASEO_MEMSWAP_LIMIT_6:-0}
 
   paseo-7:
-    extends:
-      service: paseo
+    <<: *paseo-common
     profiles: [satellites]
     container_name: pds-paseo-7
     hostname: ${PASEO_NAME_7:-paseo-7}
@@ -224,6 +243,7 @@ services:
       - "127.0.0.1:${AGENT_BROWSER_STREAM_PORT_7:-9230}:${AGENT_BROWSER_STREAM_BRIDGE_PORT:-9224}"
     volumes:
       - paseo-home-7:/home/paseo
+      - ${GLOBAL_PACKAGES_DIR:-./global-packages}:/opt/npm-global
       - ${WORKSPACE_DIR_7:-./workspace-7}:/workspace
       - ./config:/opt/devstack-seed:ro
       - ./memory:/opt/devstack-seed-memory:ro
@@ -231,8 +251,7 @@ services:
     memswap_limit: ${PASEO_MEMSWAP_LIMIT_7:-0}
 
   paseo-8:
-    extends:
-      service: paseo
+    <<: *paseo-common
     profiles: [satellites]
     container_name: pds-paseo-8
     hostname: ${PASEO_NAME_8:-paseo-8}
@@ -241,6 +260,7 @@ services:
       - "127.0.0.1:${AGENT_BROWSER_STREAM_PORT_8:-9231}:${AGENT_BROWSER_STREAM_BRIDGE_PORT:-9224}"
     volumes:
       - paseo-home-8:/home/paseo
+      - ${GLOBAL_PACKAGES_DIR:-./global-packages}:/opt/npm-global
       - ${WORKSPACE_DIR_8:-./workspace-8}:/workspace
       - ./config:/opt/devstack-seed:ro
       - ./memory:/opt/devstack-seed-memory:ro
@@ -248,8 +268,7 @@ services:
     memswap_limit: ${PASEO_MEMSWAP_LIMIT_8:-0}
 
   paseo-9:
-    extends:
-      service: paseo
+    <<: *paseo-common
     profiles: [satellites]
     container_name: pds-paseo-9
     hostname: ${PASEO_NAME_9:-paseo-9}
@@ -258,6 +277,7 @@ services:
       - "127.0.0.1:${AGENT_BROWSER_STREAM_PORT_9:-9232}:${AGENT_BROWSER_STREAM_BRIDGE_PORT:-9224}"
     volumes:
       - paseo-home-9:/home/paseo
+      - ${GLOBAL_PACKAGES_DIR:-./global-packages}:/opt/npm-global
       - ${WORKSPACE_DIR_9:-./workspace-9}:/workspace
       - ./config:/opt/devstack-seed:ro
       - ./memory:/opt/devstack-seed-memory:ro
