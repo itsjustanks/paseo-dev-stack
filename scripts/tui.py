@@ -208,8 +208,6 @@ class Svc:
 SERVICES = [
     Svc("paseo", "paseo-dev-stack-paseo", "Paseo daemon + agent CLIs",
         port_key="PASEO_PORT", default_port=6767),
-    Svc("9router", "paseo-dev-stack-9router", "model routing / multi-account",
-        port_key="NINEROUTER_PORT", default_port=20128),
     Svc("cloudflared", "paseo-dev-stack-tunnel", "named Cloudflare tunnel",
         profile="tunnel"),
     Svc("cloudflared-quick", "paseo-dev-stack-tunnel-quick", "quick tunnel (no auth)",
@@ -261,7 +259,7 @@ class State:
         self.tunnels = {"quick": "", "named": "", "vscode": ""}
         self.guards = {"lines": [], "log": []}
         self.admin = {"version": "?", "image": "?", "latest": "", "update": "",
-                      "daemons": [], "router": {}}
+                      "daemons": []}
         self.busy = set()                # names of in-flight collectors
         self.notes = deque(maxlen=200)   # activity log shown in the footer/help
         self.stamps = {}                 # collector -> last successful epoch
@@ -607,14 +605,14 @@ def collect_guards():
 
 
 def collect_admin():
-    """Versions, every Paseo daemon on this host, and 9router reachability.
+    """Versions and every Paseo daemon on this host.
 
     Deliberately cheap and network-light: the GitHub check is the only remote
     call and it is allowed to fail silently (an offline box must still show the
     rest of the panel).
     """
     info = {"version": "?", "image": "?", "latest": "", "update": "",
-            "daemons": [], "router": {}}
+            "daemons": []}
 
     # what this checkout claims to be
     vf = os.path.join(ROOT, "VERSION")
@@ -649,6 +647,8 @@ def collect_admin():
     if rc == 0:
         for line in out.splitlines():
             parts = line.split("\t")
+            # A host not yet migrated off the old bundled router may still run
+            # its leftover paseo-dev-stack-9router container. Not a daemon.
             if len(parts) < 2 or "paseo" not in parts[0] or "9router" in parts[0]:
                 continue
             name, status = parts[0], parts[1]
@@ -662,16 +662,6 @@ def collect_admin():
                 "container": name, "status": status,
                 "port": m.group(1) if m else "-", "name": hostn or "?",
             })
-
-    # 9router: reachable, and is anything routed through it
-    rc, out = sh(["docker", "compose", "exec", "-T", "--user", "paseo", "paseo",
-                  "bash", "-lc",
-                  "curl -s -o /dev/null -w '%{http_code}' http://9router:20128/api/health"],
-                 timeout=12)
-    info["router"]["health"] = clean(out.strip()) if rc == 0 else "000"
-    envd = load_env()
-    info["router"]["port"] = envd.get("NINEROUTER_PORT") or "20128"
-    info["router"]["key"] = "set" if envd.get("NINEROUTER_KEY") else "not set"
 
     with ST.lock:
         ST.admin = info
@@ -1058,11 +1048,9 @@ class UI:
         self.hline(y); y += 1
         self.put(y, 2, "ENDPOINTS", C_HEAD, bold=True); y += 1
         pp = ST.port("PASEO_PORT", 6767)
-        np_ = ST.port("NINEROUTER_PORT", 20128)
         bp = ST.port("AGENT_BROWSER_STREAM_PORT", 9223)
         for label, url, alive in (
             ("Paseo UI", f"http://127.0.0.1:{pp}", ports.get("paseo", (0, False))[1]),
-            ("9router", f"http://127.0.0.1:{np_}/dashboard", ports.get("9router", (0, False))[1]),
             ("browser stream", f"ws://127.0.0.1:{bp}", ports.get("agent-browser", (0, False))[1]),
         ):
             self.put(y, 4, f"{'●' if alive else '○'} {label:<16}", C_OK if alive else C_DIM,
@@ -1344,18 +1332,6 @@ class UI:
             y += 1
         y += 1
 
-        r = a.get("router", {})
-        self.put(y, 2, "9ROUTER", C_HEAD, bold=True); y += 1
-        okr = r.get("health") == "200"
-        self.put(y, 4, "●" if okr else "○", C_OK if okr else C_BAD)
-        self.put(y, 6, "reachable from the agent container" if okr
-                 else f"NOT reachable (http {r.get('health','?')})",
-                 0 if okr else C_BAD)
-        y += 1
-        self.put(y, 6, f"api key {r.get('key','?')}", C_DIM, dim=True); y += 1
-        self.put(y, 6, f"dashboard http://127.0.0.1:{r.get('port','20128')}/dashboard",
-                 C_KEY); y += 2
-
         self.hline(y); y += 1
         if self.stream:
             return self.tab_stream(y, "", [])
@@ -1365,7 +1341,6 @@ class UI:
             ("U", "apply the update: pull, merge new .env keys, rebuild, restart"),
             ("N", "new daemon — adds an isolated satellite for another tenant"),
             ("S", "start the satellite daemons defined in .env"),
-            ("D", "9router dashboard over a tunnel (reachable from anywhere)"),
             ("p", "pairing link for the selected daemon"),
         ):
             self.put(y, 2, key, C_KEY, bold=True)
@@ -1399,7 +1374,7 @@ class UI:
             "",
             "  admin    Enter check for updates      U apply the update",
             "           N new isolated daemon        S start the satellites",
-            "           D 9router dashboard tunnel   p pairing link for the selected",
+            "           p pairing link for the selected",
             "",
             "  Interactive programs (logins, shells, vscode tunnel) take the whole",
             "  terminal: the panel suspends, they get the real tty, and the panel",
@@ -1439,8 +1414,8 @@ class UI:
             elif name == "doctor":
                 self.tab_stream(y, "DOCTOR", [
                     "press Enter to run scripts/doctor.sh.",
-                    "it verifies containers, every agent CLI, 9router reachability,",
-                    "auto-memory, the headless browser, plugins and the guards.",
+                    "it verifies containers, every agent CLI, auto-memory,",
+                    "the headless browser, plugins and the guards.",
                 ])
             elif name == "guards":
                 self.tab_guards(y)
@@ -1601,10 +1576,8 @@ class Actions:
             t = dict(ST.tunnels)
         bp = ST.port("AGENT_BROWSER_STREAM_PORT", 9223)
         pp = ST.port("PASEO_PORT", 6767)
-        np_ = ST.port("NINEROUTER_PORT", 20128)
         urls = [
             ("paseo (local)", f"http://127.0.0.1:{pp}"),
-            ("9router", f"http://127.0.0.1:{np_}/dashboard"),
             ("browser stream", f"ws://127.0.0.1:{bp}"),
             ("quick tunnel", t.get("quick") or "(not running)"),
             ("named tunnel", t.get("named") or "(not running)"),
@@ -1705,8 +1678,6 @@ class Actions:
             if ch == "o":
                 if s.service == "paseo":
                     self.open_url(f"http://127.0.0.1:{ST.port('PASEO_PORT', 6767)}")
-                elif s.service == "9router":
-                    self.open_url(f"http://127.0.0.1:{ST.port('NINEROUTER_PORT', 20128)}/dashboard")
                 else:
                     ui.flash("no local URL for that service")
                 return True
@@ -1816,7 +1787,6 @@ class Actions:
         if tab == "admin":
             with ST.lock:
                 daemons = list(ST.admin.get("daemons", []))
-                router = dict(ST.admin.get("router", {}))
 
             if key in (curses.KEY_ENTER, 10, 13):
                 self.stream_raw(["bash", os.path.join(ROOT, "scripts", "update.sh")],
@@ -1849,15 +1819,6 @@ class Actions:
                 # up, and it needs a name, so hand over the terminal.
                 handoff(["bash", os.path.join(ROOT, "scripts", "new-daemon.sh")],
                         "── add a daemon ──")
-                refresh_all()
-                return True
-
-            if ch == "D":
-                port = router.get("port", "20128")
-                handoff(["bash", "-lc",
-                         f"cd {shlex.quote(ROOT)} && "
-                         f"bash scripts/router-tunnel.sh {shlex.quote(str(port))}"],
-                        "── 9router dashboard tunnel ──")
                 refresh_all()
                 return True
 

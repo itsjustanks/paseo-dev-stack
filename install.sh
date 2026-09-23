@@ -79,7 +79,6 @@ if [ "$OS" = "Darwin" ]; then
   docker compose up -d --build
   echo
   log "Paseo:   http://127.0.0.1:$(grep -E '^PASEO_PORT=' .env | cut -d= -f2 || echo 6767)"
-  log "9router: http://127.0.0.1:$(grep -E '^NINEROUTER_PORT=' .env | cut -d= -f2 || echo 20128)"
   log "next: make auth-all && make doctor"
   exit 0
 fi
@@ -148,10 +147,7 @@ cd "$DEVSTACK_DIR"
 if [ ! -f .env ]; then
   sudo -u "$DEVSTACK_USER" cp .env.example .env
   pw="${PASEO_PASSWORD:-$(gen_pw)}"
-  rpw="$(gen_pw)"
-  sudo -u "$DEVSTACK_USER" sed -i \
-    -e "s|^PASEO_PASSWORD=.*|PASEO_PASSWORD=${pw}|" \
-    -e "s|^NINEROUTER_PASSWORD=.*|NINEROUTER_PASSWORD=${rpw}|" .env
+  sudo -u "$DEVSTACK_USER" sed -i "s|^PASEO_PASSWORD=.*|PASEO_PASSWORD=${pw}|" .env
   # NOTE: `[ -n "$x" ] && cmd` evaluates to FALSE when x is empty, and under
   # `set -e` that aborts the script — silently skipping the credentials file
   # written just below. Use if/fi, never the && form, for optional steps.
@@ -163,7 +159,7 @@ if [ ! -f .env ]; then
   fi
   # Credentials are also written where a human can find them after a headless
   # cloud-init run, since the console output is long gone by then.
-  printf 'PASEO_PASSWORD=%s\nNINEROUTER_PASSWORD=%s\n' "$pw" "$rpw" > /root/paseo-dev-stack-credentials.txt
+  printf 'PASEO_PASSWORD=%s\n' "$pw" > /root/paseo-dev-stack-credentials.txt
   chmod 600 /root/paseo-dev-stack-credentials.txt
   log "credentials written to /root/paseo-dev-stack-credentials.txt"
 
@@ -187,7 +183,7 @@ fi
 if command -v systemctl >/dev/null 2>&1; then
   cat > /etc/systemd/system/paseo-dev-stack.service <<UNIT
 [Unit]
-Description=paseo-dev-stack (Paseo + 9router)
+Description=paseo-dev-stack (Paseo daemons)
 Requires=docker.service
 After=docker.service network-online.target
 
@@ -226,7 +222,6 @@ cat <<BANNER
   ✅ paseo-dev-stack is up
 
      Paseo   : http://127.0.0.1:$(grep -E '^PASEO_PORT=' .env | cut -d= -f2 || echo 6767)   (bound to localhost by design)
-     9router : http://127.0.0.1:$(grep -E '^NINEROUTER_PORT=' .env | cut -d= -f2 || echo 20128)
      creds   : /root/paseo-dev-stack-credentials.txt
 
   ┌─────────────────────────────────────────────────────────────────────┐

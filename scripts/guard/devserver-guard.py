@@ -66,7 +66,9 @@ SUPERVISOR_RE = re.compile(
 # 9router's dashboard is itself a Next app, so its child shows up as
 # `next-server (vX)` exactly like a workspace dev server. Without the 9router
 # term, this guard reaps the live model router every 60s and every agent CLI
-# routed through it loses its connection. 9router supervises itself; it is
+# routed through it loses its connection. The stack no longer ships 9router,
+# but a host may still run one (an old container not yet removed, or one run
+# outside the stack), so the term stays. 9router supervises itself; it is
 # never this guard's business. Match on the PARENT CHAIN too, not just the
 # process's own cmdline — that was the bug the first fix missed.
 NEVER_KILL_RE = re.compile(

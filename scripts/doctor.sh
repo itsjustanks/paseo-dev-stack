@@ -8,7 +8,8 @@ bad()  { printf '  \033[31m✗\033[0m %s\n' "$*"; fail=1; }
 note() { printf '  \033[33m·\033[0m %s\n' "$*"; }
 
 echo "── containers ──"
-for s in paseo 9router; do
+# shellcheck disable=SC2043  # one service today; the loop is the pattern
+for s in paseo; do
   # State alone passes a container that is running but failing its own
   # healthcheck. The paseo image defines one; a live host sat at
   # Health=unhealthy FailingStreak=11 while this printed a green tick.
@@ -67,15 +68,6 @@ for p in /usr/local/bin/claude /usr/local/bin/codex /usr/local/bin/cursor-agent 
     *)          bad "$p — could not verify" ;;
   esac
 done
-
-echo "── 9router ──"
-code="$($DC exec -T --user paseo paseo bash -lc \
-  'curl -s -o /dev/null -w "%{http_code}" http://9router:20128/api/health' 2>/dev/null)"
-[ "$code" = 200 ] && ok "reachable from the agent container (HTTP $code)" \
-                  || bad "not reachable from the agent container (HTTP ${code:-none})"
-grep -q '^NINEROUTER_KEY=.\+' .env 2>/dev/null \
-  && ok "NINEROUTER_KEY set in .env" \
-  || note "NINEROUTER_KEY empty — agents will use their own OAuth login"
 
 echo "── auto-memory ──"
 # Counting files only proves our own cp worked. What matters is that Claude
