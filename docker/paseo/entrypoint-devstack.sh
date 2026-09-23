@@ -93,6 +93,13 @@ if [ "$(id -u)" = "0" ]; then
            "$HOME_DIR/.npm" "$HOME_DIR/.cache" "$HOME_DIR/.local"; do
     [ -e "$d" ] && [ "$(stat -c %u "$d")" != "1000" ] && chown -R paseo:paseo "$d" || true
   done
+  # `docker exec` without `--user paseo` runs the agent CLIs as root, leaving root-owned
+  # files *inside* an otherwise paseo-owned ~/.codex or ~/.claude (e.g. ~/.codex/tmp/arg0).
+  # Codex then warns "failed to clean up stale arg0 temp dirs: Permission denied" on every
+  # start. Reclaim just those files; paseo-owned ones are left untouched.
+  for d in "$HOME_DIR/.codex" "$HOME_DIR/.claude"; do
+    [ -d "$d" ] && find "$d" -xdev ! -user 1000 -exec chown -h paseo:paseo {} + 2>/dev/null || true
+  done
 fi
 if [ -f /opt/chrome-path ]; then
   AGENT_BROWSER_EXECUTABLE_PATH="$(cat /opt/chrome-path)"
