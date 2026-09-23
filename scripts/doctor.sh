@@ -69,6 +69,19 @@ for p in /usr/local/bin/claude /usr/local/bin/codex /usr/local/bin/cursor-agent 
   esac
 done
 
+echo "── model routing ──"
+# `make router-on` (gone) wrote 9router routing into Claude's and Codex's own
+# config on the volume. It outlives the router and silently overrides the AI
+# Router plugin -- one daemon's Codex answered 401 for hours because of it.
+rc=0
+$DC exec -T --user paseo paseo python3 - --check /home/paseo \
+  < scripts/lib/router-leftovers.py >/dev/null 2>&1 || rc=$?
+case "$rc" in
+  0) ok "no old 9router routing in Claude/Codex config" ;;
+  1) bad "old 9router routing still in Claude/Codex config — run: make migrate-ai-router" ;;
+  *) note "could not check Claude/Codex config for old routing" ;;
+esac
+
 echo "── auto-memory ──"
 # Counting files only proves our own cp worked. What matters is that Claude
 # Code is POINTED at that directory — otherwise the memories are inert.
