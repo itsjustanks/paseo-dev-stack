@@ -29,6 +29,7 @@ cp .env.example "$T/.env"
   echo "AI_ROUTER_KEY=k-test"
   echo "AI_ROUTER_TOKEN=t-test"
   echo "AI_ROUTER_CONSOLE_URL=https://console.test"
+  echo "AI_ROUTER_PLUGIN_SOURCE=/opt/npm-global/plugins/ai-router:apps/paseo"
 } >> "$T/.env"
 
 $DC --env-file "$T/.env" config --format json > "$T/default.json"
@@ -52,7 +53,8 @@ svcs="$(python3 -c 'import json,sys; print(" ".join(sorted(json.load(open(sys.ar
 missing="$(python3 - "$T/satellites.json" <<'PY'
 import json, sys
 want = {"AI_ROUTER_URL": "https://router.test", "AI_ROUTER_KEY": "k-test",
-        "AI_ROUTER_TOKEN": "t-test", "AI_ROUTER_CONSOLE_URL": "https://console.test"}
+        "AI_ROUTER_TOKEN": "t-test", "AI_ROUTER_CONSOLE_URL": "https://console.test",
+        "AI_ROUTER_PLUGIN_SOURCE": "/opt/npm-global/plugins/ai-router:apps/paseo"}
 out = []
 for name, svc in sorted(json.load(open(sys.argv[1]))["services"].items()):
     if not name.startswith("paseo"):

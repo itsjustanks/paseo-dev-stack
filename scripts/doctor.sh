@@ -117,7 +117,10 @@ if [ -n "$plugs" ]; then
                note "usually: pluginsEnabled is false, or node_modules is missing" ;;
     esac
   done <<< "$plugs"
-else
+fi
+printf '%s\n' "$plugs" | grep -q '^ai-router ' \
+  || note "AI Router plugin not installed (README: \"AI Router plugin\")"
+if [ -z "$plugs" ]; then
   copied="$($DC exec -T --user paseo paseo bash -lc \
     'ls -1 /home/paseo/.paseo/plugins 2>/dev/null | head -3' 2>/dev/null | tr -d '\r')"
   if [ -n "$copied" ]; then

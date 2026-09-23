@@ -210,7 +210,9 @@ PY
 # own paseo-plugin.json — ids must match /^[a-z][a-z0-9-]*$/.
 #
 # The image vendors no plugins today, so this loop finds nothing unless you
-# add one under /opt/paseo-plugins (see the Dockerfile).
+# add one under /opt/paseo-plugins (see the Dockerfile). The AI Router plugin
+# comes in separately: set AI_ROUTER_PLUGIN_SOURCE in .env and the registrar
+# below installs it into this daemon (see register-plugins.sh).
 PLUGIN_SRC="${PASEO_PLUGIN_SOURCE:-/opt/paseo-plugins}"
 PLUGIN_DEST="$HOME_DIR/.paseo/plugins"
 if [ -d "$PLUGIN_SRC" ]; then
@@ -240,7 +242,8 @@ fi
 # Register queued plugins once the daemon is up. Backgrounded because
 # `paseo plugin add` needs the daemon that the exec below starts.
 if [ -x /usr/local/bin/register-plugins.sh ] \
-   && [ -s "$HOME_DIR/.paseo/.pending-plugins" ]; then
+   && { [ -s "$HOME_DIR/.paseo/.pending-plugins" ] \
+        || [ -n "${AI_ROUTER_PLUGIN_SOURCE:-}" ]; }; then
   run_as_paseo env HOME="$HOME_DIR" PASEO_LISTEN="${PASEO_LISTEN:-0.0.0.0:6767}" \
     nohup /usr/local/bin/register-plugins.sh \
       >> "$HOME_DIR/.paseo/plugin-register.log" 2>&1 &

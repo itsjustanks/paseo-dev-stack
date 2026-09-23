@@ -43,6 +43,8 @@ services:
       AI_ROUTER_KEY: ${AI_ROUTER_KEY:-}
       AI_ROUTER_TOKEN: ${AI_ROUTER_TOKEN:-}
       AI_ROUTER_CONSOLE_URL: ${AI_ROUTER_CONSOLE_URL:-}
+      # Set = the plugin registrar installs the AI Router plugin on boot.
+      AI_ROUTER_PLUGIN_SOURCE: ${AI_ROUTER_PLUGIN_SOURCE:-}
       # Agent CLI credentials (optional; blank = interactive login instead)
       GH_TOKEN: ${GH_TOKEN:-}
       SUPABASE_ACCESS_TOKEN: ${SUPABASE_ACCESS_TOKEN:-}
