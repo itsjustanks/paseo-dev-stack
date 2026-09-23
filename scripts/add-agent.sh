@@ -79,9 +79,11 @@ running || { echo "container not running — 'make up' first" >&2; exit 1; }
 case "$METHOD" in
   npm)
     echo "installing $TARGET (npm, global)…"
-    # npm -g writes to /usr/local, which is NOT on the volume, so this survives
-    # a restart — but not a rebuild. Hence --persist.
-    $DC exec -T --user root "$SVC" bash -lc "npm install -g '$TARGET'"
+    # npm -g lands in /opt/npm-global (NPM_CONFIG_PREFIX), the host-mounted
+    # ./global-packages shared by every daemon, so it survives restarts,
+    # recreates and rebuilds. As paseo, never root: root-owned files there make
+    # the next `npm i -g` fail with EACCES.
+    $DC exec -T --user paseo "$SVC" bash -lc "npm install -g '$TARGET'"
     ;;
   curl)
     echo "installing from $TARGET (curl installer, HOME redirected)…"

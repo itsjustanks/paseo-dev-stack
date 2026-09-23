@@ -250,5 +250,30 @@ if [ -x /usr/local/bin/register-plugins.sh ] \
   log "plugin registrar started (waits for the daemon)"
 fi
 
+# ── Paseo server ────────────────────────────────────────────────────────────
+# The base entrypoint starts the daemon from the path in /etc/paseo-server-entry
+# (the image's copy under /usr/local), not from PATH. A server updated into
+# /opt/npm-global (make update-clis) survives recreates where /usr/local does
+# not, but would never run. Point the entry at it when it is the NEWER copy and
+# parses; an older one left behind after an image upgrade must not downgrade
+# the daemon. Redone every boot from the image's original, saved once.
+SERVER_ENTRY=/etc/paseo-server-entry
+NPM_SERVER=/opt/npm-global/lib/node_modules/@getpaseo/server
+pkg_version() { node -p 'require(process.argv[1] + "/package.json").version' "$1" 2>/dev/null || true; }
+if [ "$(id -u)" = "0" ] && [ -f "$SERVER_ENTRY" ]; then
+  [ -f "$SERVER_ENTRY.image" ] || cp "$SERVER_ENTRY" "$SERVER_ENTRY.image"
+  entry="$(cat "$SERVER_ENTRY.image")"
+  cand="$NPM_SERVER/dist/scripts/supervisor-entrypoint.js"
+  if [ -f "$cand" ] && node --check "$cand" 2>/dev/null; then
+    v_img="$(pkg_version "${entry%/dist/*}")"; v_npm="$(pkg_version "$NPM_SERVER")"
+    if [ -n "$v_npm" ] \
+       && [ "$(printf '%s\n%s\n' "$v_img" "$v_npm" | sort -V | tail -1)" = "$v_npm" ]; then
+      entry="$cand"
+    fi
+  fi
+  printf '%s\n' "$entry" > "$SERVER_ENTRY"
+  log "paseo server: $entry"
+fi
+
 log "handing off to paseo entrypoint"
 exec /usr/local/bin/paseo-docker-entrypoint "$@"

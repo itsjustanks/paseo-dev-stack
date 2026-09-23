@@ -243,11 +243,12 @@ RUN rm -rf /home/paseo/.npm /root/.npm || true
 RUN chmod -R a+rX "$AGENT_HOME" \
     && echo 'paseo ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/90-paseo \
     && chmod 0440 /etc/sudoers.d/90-paseo \
-    # `npm install -g` writes to /usr/local, which is root-owned. Give paseo
-    # ownership of just the npm-managed subdirs so an agent can install a tool
-    # mid-session without sudo (and so `make add-agent` works as paseo).
-    # These are OUTSIDE the /home/paseo volume, so they persist across restarts
-    # but reset on rebuild — which is what EXTRA_NPM_PACKAGES is for.
+    # /usr/local is root-owned. Give paseo just the npm-managed subdirs so the
+    # image's own packages can be patched without sudo. Anything written there
+    # at RUNTIME lives in the container's own layer: it survives `restart` but
+    # is lost whenever the container is RECREATED (`compose down`/`up`, which
+    # the systemd unit runs on every reboot, a rebuild, a .env change). Runtime
+    # installs belong in /opt/npm-global (below); bake-ins in EXTRA_NPM_PACKAGES.
     && mkdir -p /usr/local/lib/node_modules /usr/local/bin /usr/local/share/man/man1 \
     # npm -g needs BOTH the package dir to write into and a bin dir to symlink
     # the entrypoint into (it fails with EACCES on the symlink otherwise).
