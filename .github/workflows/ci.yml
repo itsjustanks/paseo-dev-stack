@@ -67,6 +67,9 @@ jobs:
           docker compose config --quiet
           echo "compose OK"
 
+      - name: compose ships no router; AI Router settings reach every daemon
+        run: bash tests/test-compose.sh
+
       - name: hadolint
         uses: hadolint/hadolint-action@v3.3.0
         with:
