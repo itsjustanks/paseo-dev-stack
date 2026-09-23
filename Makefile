@@ -8,7 +8,8 @@ DC    := docker compose
         code-tunnel code-tunnel-bg code-tunnel-url \
         tunnel quick-tunnel tunnel-url memory-push memory-pull \
         guards guards-status guards-dry mem autotune autotune-write \
-        agents add-agent version update update-apply pair \
+        agents add-agent version update update-apply update-clis \
+        migrate-ai-router pair \
         satellites satellites-down new-daemon \
         browser-open browser-stream browser-view browser-test clean nuke
 
@@ -221,6 +222,12 @@ update: ## Check for a newer release (dry run)
 
 update-apply: ## Pull, merge .env, rebuild, restart (volumes kept)
 	@./scripts/update.sh --apply
+
+update-clis: ## Update paseo, claude, codex in every daemon (survives recreates)
+	@./scripts/update-clis.sh
+
+migrate-ai-router: ## Strip old 9router routing from every daemon (backs up first)
+	@./scripts/migrate-ai-router.sh
 
 # ── Checks ──────────────────────────────────────────────────────────────────
 doctor: ## Verify every tool inside the container
