@@ -350,7 +350,7 @@ survive restarts, rebuilds and updates.
 **Settings.** These reach the main daemon and every satellite:
 
 ```bash
-AI_ROUTER_URL=          # router endpoint, e.g. http://10.126.0.9:20128
+AI_ROUTER_URL=          # router endpoint, e.g. http://10.0.0.5:20128
 AI_ROUTER_KEY=          # inference key
 AI_ROUTER_TOKEN=        # read-only token: accounts and usage
 AI_ROUTER_CONSOLE_URL=  # dashboard link
