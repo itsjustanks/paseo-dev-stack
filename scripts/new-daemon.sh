@@ -4,9 +4,7 @@
 #
 # Each daemon is fully isolated — its own state volume (agents, credentials,
 # history), its own workspace directory, its own port and its own pairing
-# identity — while sharing the one 9router pool. That is what makes this usable
-# for several tenants on one machine: they share the model subscriptions and
-# nothing else.
+# identity. That is what makes this usable for several tenants on one machine.
 #
 #   ./scripts/new-daemon.sh              # interactive
 #   ./scripts/new-daemon.sh acme 6770    # name and port
@@ -213,7 +211,7 @@ cat <<BANNER
      ui        http://127.0.0.1:${PORT}
      workspace ${WSDIR}   (on the host; /workspace inside)
      state     its own volume — separate agents, logins and history
-     models    shares the one 9router pool
+     models    via the AI Router plugin, installed per daemon (AI_ROUTER_* in .env)
 
   Pair it:
      docker exec -it --user paseo pds-paseo-${SLOT} paseo daemon pair --relay

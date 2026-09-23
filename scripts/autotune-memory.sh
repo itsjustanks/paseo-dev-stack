@@ -20,7 +20,7 @@
 #
 # Env overrides:
 #   HOST_RESERVE_GB   memory kept for the host  (default 1)
-#   SIDECAR_GB        memory kept for 9router + cloudflared (default 1)
+#   SIDECAR_GB        memory kept for sidecars, e.g. cloudflared (default 1)
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 cd "$(dirname "$0")/.." || exit 1
@@ -95,7 +95,7 @@ min_avail_gb=$(( reserve_mb / 1024 + 2 ))
 cat <<REPORT
   host total          ${total_mb} MB  ($(( total_mb / 1024 )) GB)
   host reserve        ${reserve_mb} MB   (crash headroom: ssh + docker stay alive)
-  sidecars            ${sidecar_mb} MB   (9router, cloudflared)
+  sidecars            ${sidecar_mb} MB   (cloudflared)
   daemons             ${DAEMONS}   (agent budget ${agents_mb} MB, split evenly)
   ──────────────────────────────────────────
   PASEO_MEM_LIMIT     ${paseo_mb}m   ($(( paseo_mb / 1024 )) GB per agent container)

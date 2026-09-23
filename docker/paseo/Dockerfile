@@ -243,11 +243,12 @@ RUN rm -rf /home/paseo/.npm /root/.npm || true
 RUN chmod -R a+rX "$AGENT_HOME" \
     && echo 'paseo ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/90-paseo \
     && chmod 0440 /etc/sudoers.d/90-paseo \
-    # `npm install -g` writes to /usr/local, which is root-owned. Give paseo
-    # ownership of just the npm-managed subdirs so an agent can install a tool
-    # mid-session without sudo (and so `make add-agent` works as paseo).
-    # These are OUTSIDE the /home/paseo volume, so they persist across restarts
-    # but reset on rebuild — which is what EXTRA_NPM_PACKAGES is for.
+    # /usr/local is root-owned. Give paseo just the npm-managed subdirs so the
+    # image's own packages can be patched without sudo. Anything written there
+    # at RUNTIME lives in the container's own layer: it survives `restart` but
+    # is lost whenever the container is RECREATED (`compose down`/`up`, which
+    # the systemd unit runs on every reboot, a rebuild, a .env change). Runtime
+    # installs belong in /opt/npm-global (below); bake-ins in EXTRA_NPM_PACKAGES.
     && mkdir -p /usr/local/lib/node_modules /usr/local/bin /usr/local/share/man/man1 \
     # npm -g needs BOTH the package dir to write into and a bin dir to symlink
     # the entrypoint into (it fails with EACCES on the symlink otherwise).
@@ -278,24 +279,13 @@ RUN set -eux; \
     chmod +x /usr/local/bin/code; \
     code --version
 
-# ── Paseo plugin: 9router ───────────────────────────────────────────────────
-# Surfaces 9router's accounts, quotas and models in the Paseo sidebar.
-# Vendored into the image; the entrypoint registers it on first boot, because
-# `paseo plugin add` writes into ~/.paseo, which is on the volume.
-ARG PLUGIN_9ROUTER_REPO=https://github.com/itsjustanks/paseo-plugin-9router
-ARG PLUGIN_9ROUTER_REF=main
-RUN set -eux; \
-    git clone --depth 1 -b "$PLUGIN_9ROUTER_REF" "$PLUGIN_9ROUTER_REPO" \
-      /opt/paseo-plugins/9router; \
-    rm -rf /opt/paseo-plugins/9router/.git; \
-    # The plugin is TypeScript with devDependencies (react, zod, @getpaseo/*).
-    # Without node_modules the daemon cannot load it — it registers and then
-    # sits at STATUS=disabled with nothing in `paseo plugin logs`. Install at
-    # BUILD time so a fresh container needs no network and no manual step.
-    if [ -f /opt/paseo-plugins/9router/apps/paseo/package.json ]; then \
-      (cd /opt/paseo-plugins/9router/apps/paseo && npm install --no-audit --no-fund --silent); \
-    fi; \
-    chmod -R a+rX /opt/paseo-plugins
+# ── Paseo plugins ───────────────────────────────────────────────────────────
+# The image vendors NO plugins. Model routing is an AI Router plugin (e.g.
+# OmniRoute) you install yourself — see the README. To bake one in instead,
+# clone it into /opt/paseo-plugins/<name> here and run its `npm install` at
+# BUILD time (a TypeScript plugin without node_modules registers but never
+# loads). The entrypoint registers everything under PASEO_PLUGIN_SOURCE on boot,
+# because `paseo plugin add` writes into ~/.paseo, which is on the volume.
 
 COPY docker/paseo/stream-bridge.py       /usr/local/bin/stream-bridge.py
 COPY docker/paseo/register-plugins.sh    /usr/local/bin/register-plugins.sh

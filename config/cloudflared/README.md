@@ -11,7 +11,6 @@ public hostname does:
 | Public hostname | Service | Notes |
 |---|---|---|
 | `paseo.example.com` | `http://paseo:6767` | The main daemon UI. |
-| `router.example.com` | `http://9router:20128` | The 9router dashboard. **Put Cloudflare Access in front of this** — it holds your subscription accounts. |
 | `paseo-2.example.com` | `http://paseo-2:6767` | A satellite daemon (`--profile satellites`). |
 | `browser.example.com` | `http://paseo:9224` | agent-browser live view (WebSocket; works over the tunnel). |
 
@@ -31,8 +30,6 @@ credentials-file: /etc/cloudflared/<TUNNEL-UUID>.json
 ingress:
   - hostname: paseo.example.com
     service: http://paseo:6767
-  - hostname: router.example.com
-    service: http://9router:20128
   - hostname: browser.example.com
     service: http://paseo:9224
   # A catch-all rule is REQUIRED and must be last, or cloudflared refuses to start.

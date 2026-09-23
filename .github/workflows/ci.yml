@@ -60,12 +60,25 @@ jobs:
           # never build, always inherit a cap.
           bash tests/test-new-daemon.sh
 
+      - name: AI Router migration, CLI updates, plugin boot, guard
+        run: |
+          # Rollout lessons: 9router leftovers overrode plugin routing (401s
+          # for hours), --prefix /usr/local updates rolled back on recreate,
+          # and the guard restarted a containerised router every 2h.
+          bash tests/test-migrate-ai-router.sh
+          bash tests/test-update-clis.sh
+          bash tests/test-register-plugins.sh
+          python3 tests/test-devserver-guard.py
+
       - name: compose config is valid
         run: |
           cp .env.example .env
           sed -i 's/^PASEO_PASSWORD=.*/PASEO_PASSWORD=ci-test/' .env
           docker compose config --quiet
           echo "compose OK"
+
+      - name: compose ships no router; AI Router settings reach every daemon
+        run: bash tests/test-compose.sh
 
       - name: hadolint
         uses: hadolint/hadolint-action@v3.3.0

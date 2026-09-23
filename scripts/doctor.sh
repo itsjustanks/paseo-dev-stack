@@ -8,7 +8,8 @@ bad()  { printf '  \033[31m✗\033[0m %s\n' "$*"; fail=1; }
 note() { printf '  \033[33m·\033[0m %s\n' "$*"; }
 
 echo "── containers ──"
-for s in paseo 9router; do
+# shellcheck disable=SC2043  # one service today; the loop is the pattern
+for s in paseo; do
   # State alone passes a container that is running but failing its own
   # healthcheck. The paseo image defines one; a live host sat at
   # Health=unhealthy FailingStreak=11 while this printed a green tick.
@@ -68,14 +69,18 @@ for p in /usr/local/bin/claude /usr/local/bin/codex /usr/local/bin/cursor-agent 
   esac
 done
 
-echo "── 9router ──"
-code="$($DC exec -T --user paseo paseo bash -lc \
-  'curl -s -o /dev/null -w "%{http_code}" http://9router:20128/api/health' 2>/dev/null)"
-[ "$code" = 200 ] && ok "reachable from the agent container (HTTP $code)" \
-                  || bad "not reachable from the agent container (HTTP ${code:-none})"
-grep -q '^NINEROUTER_KEY=.\+' .env 2>/dev/null \
-  && ok "NINEROUTER_KEY set in .env" \
-  || note "NINEROUTER_KEY empty — agents will use their own OAuth login"
+echo "── model routing ──"
+# `make router-on` (gone) wrote 9router routing into Claude's and Codex's own
+# config on the volume. It outlives the router and silently overrides the AI
+# Router plugin -- one daemon's Codex answered 401 for hours because of it.
+rc=0
+$DC exec -T --user paseo paseo python3 - --check /home/paseo \
+  < scripts/lib/router-leftovers.py >/dev/null 2>&1 || rc=$?
+case "$rc" in
+  0) ok "no old 9router routing in Claude/Codex config" ;;
+  1) bad "old 9router routing still in Claude/Codex config — run: make migrate-ai-router" ;;
+  *) note "could not check Claude/Codex config for old routing" ;;
+esac
 
 echo "── auto-memory ──"
 # Counting files only proves our own cp worked. What matters is that Claude
@@ -112,7 +117,10 @@ if [ -n "$plugs" ]; then
                note "usually: pluginsEnabled is false, or node_modules is missing" ;;
     esac
   done <<< "$plugs"
-else
+fi
+printf '%s\n' "$plugs" | grep -q '^ai-router ' \
+  || note "AI Router plugin not installed (README: \"AI Router plugin\")"
+if [ -z "$plugs" ]; then
   copied="$($DC exec -T --user paseo paseo bash -lc \
     'ls -1 /home/paseo/.paseo/plugins 2>/dev/null | head -3' 2>/dev/null | tr -d '\r')"
   if [ -n "$copied" ]; then

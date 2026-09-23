@@ -6,11 +6,11 @@ DC    := docker compose
 .PHONY: tui help up down restart build rebuild logs ps shell root doctor \
         auth-claude auth-codex auth-kimi auth-cursor auth-all \
         code-tunnel code-tunnel-bg code-tunnel-url \
-        tunnel quick-tunnel tunnel-url router memory-push memory-pull \
+        tunnel quick-tunnel tunnel-url memory-push memory-pull \
         guards guards-status guards-dry mem autotune autotune-write \
-        agents add-agent router-status router-key router-on router-off \
-        version update update-apply pair satellites satellites-down \
-        new-daemon router-tunnel \
+        agents add-agent version update update-apply update-clis \
+        migrate-ai-router pair \
+        satellites satellites-down new-daemon \
         browser-open browser-stream browser-view browser-test clean nuke
 
 # Running make as root inside this repo creates root-owned files (.env edits,
@@ -47,7 +47,6 @@ up: .env ## Build if needed and start the stack
 	@$(MAKE) --no-print-directory ps
 	@echo
 	@echo "  Paseo   → http://127.0.0.1:$${PASEO_PORT:-6767}"
-	@echo "  9router → http://127.0.0.1:$${NINEROUTER_PORT:-20128}  (dashboard pw: see .env)"
 	@printf "  next: \033[1;36mmake tui\033[0m  (or: make auth-all)\n"
 
 down: ## Stop the stack (volumes and credentials are kept)
@@ -134,25 +133,13 @@ code-tunnel-url: ## Print the vscode.dev URL for the running tunnel
 	  'grep -oE "https://vscode.dev/tunnel/[^ ]+" /home/paseo/.vscode-tunnel.log 2>/dev/null | tail -1' \
 	  || echo "not started yet — make code-tunnel-bg"
 
-# ── Agents & routing ────────────────────────────────────────────────────────
+# ── Agents ──────────────────────────────────────────────────────────────────
 agents: ## List agent CLIs installed in the container
 	@./scripts/add-agent.sh --list
 
 add-agent: ## Install another agent CLI (make add-agent M=npm P=opencode-ai [PERSIST=1])
 	@test -n "$(M)" -a -n "$(P)" || { echo "usage: make add-agent M=npm|curl P=<package-or-url> [PERSIST=1]"; exit 1; }
 	@./scripts/add-agent.sh $(M) "$(P)" $(if $(PERSIST),--persist,)
-
-router-status: ## Show which CLIs are routed through 9router
-	@./scripts/router-connect.sh status
-
-router-key: ## Mint a 9router API key and save it to .env
-	@./scripts/router-connect.sh key
-
-router-on: ## Route claude + codex through 9router
-	@./scripts/router-connect.sh on
-
-router-off: ## Unroute; each CLI uses its own login
-	@./scripts/router-connect.sh off
 
 # ── Memory sizing ───────────────────────────────────────────────────────────
 autotune: ## Show RAM-based sizing for this host
@@ -168,26 +155,20 @@ pair: ## Print the Paseo pairing link (relay — no public port needed)
 new-daemon: ## Add an isolated daemon (make new-daemon N=acme [P=6770])
 	@./scripts/new-daemon.sh $(N) $(P)
 
-router-tunnel: ## Temporarily expose the 9router dashboard (no auth; ctrl-C closes)
-	@./scripts/router-tunnel.sh
-
-satellites: ## Start extra Paseo daemons sharing the same 9router pool
+satellites: ## Start the extra Paseo daemons defined in .env
 	@# --no-build: satellites reuse the main image. Building it here would
 	@# compile beside a running stack, which OOM-killed a 31GB host.
 	$(DC) --profile satellites up -d --no-build
 	@echo
 	@echo "  paseo-2 -> http://127.0.0.1:$${PASEO_PORT_2:-6768}"
 	@echo "  paseo-3 -> http://127.0.0.1:$${PASEO_PORT_3:-6769}"
-	@echo "  each has its own state + workspace; all share http://9router:20128"
+	@echo "  each has its own state + workspace"
 
 satellites-down: ## Stop the satellite daemons (their volumes are kept)
 	@# Every slot, not just 2 and 3 -- naming a subset silently left tenants
 	@# 4-9 running while reporting the satellites stopped.
 	$(DC) --profile satellites stop \
 	  paseo-2 paseo-3 paseo-4 paseo-5 paseo-6 paseo-7 paseo-8 paseo-9
-
-router: ## Open the 9router dashboard URL
-	@echo "http://127.0.0.1:$${NINEROUTER_PORT:-20128}/dashboard"
 
 # ── Auto-memory ─────────────────────────────────────────────────────────────
 memory-push: ## Copy ./memory/*.md into the container's live memory store
@@ -241,6 +222,12 @@ update: ## Check for a newer release (dry run)
 
 update-apply: ## Pull, merge .env, rebuild, restart (volumes kept)
 	@./scripts/update.sh --apply
+
+update-clis: ## Update paseo, claude, codex in every daemon (survives recreates)
+	@./scripts/update-clis.sh
+
+migrate-ai-router: ## Strip old 9router routing from every daemon (backs up first)
+	@./scripts/migrate-ai-router.sh
 
 # ── Checks ──────────────────────────────────────────────────────────────────
 doctor: ## Verify every tool inside the container

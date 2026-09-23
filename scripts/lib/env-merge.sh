@@ -7,7 +7,7 @@
 # Runnable:     scripts/lib/env-merge.sh .env.example .env [--dry-run]
 #
 # ── Why this is append-only ──────────────────────────────────────────────────
-# The file holds live secrets: PASEO_PASSWORD, TUNNEL_TOKEN, NINEROUTER_KEY.
+# The file holds live secrets: PASEO_PASSWORD, TUNNEL_TOKEN, AI_ROUTER_KEY.
 # Any strategy that REWRITES the file can corrupt them. This one never rewrites:
 # it reads the set of keys already assigned, and appends only the blocks for
 # keys that are absent. The worst possible failure is a missing new key (which
@@ -26,8 +26,7 @@
 #                            ' #' (whitespace-preceded) as an inline comment,
 #                            never a bare '#'. We never strip comments from
 #                            values because we never re-emit values.
-#  4. grep -q "^KEY"         matches NINEROUTER_PORT when asking about
-#                            NINEROUTER_PO... and matches "PASEO_PORT_EXTRA"
+#  4. grep -q "^KEY"         matches "PASEO_PORT_2" and "PASEO_PORT_EXTRA"
 #                            when asking about "PASEO_PORT". Anchor on the '='.
 #  5. any line with '='      this very .env.example documents defaults inside
 #                            comments:

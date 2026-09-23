@@ -1,6 +1,10 @@
-# devstack — Paseo + 9router + Cloudflare tunnel + agent CLIs.
+# devstack — Paseo daemons + Cloudflare tunnel + agent CLIs.
 #
-# Security model: NOTHING is published to 0.0.0.0. Both app ports bind to
+# Model routing is NOT part of this stack. Install an AI Router plugin (e.g.
+# OmniRoute) into the daemon and point it at a router server; its settings
+# are passed through from .env below.
+#
+# Security model: NOTHING is published to 0.0.0.0. Every port binds to
 # 127.0.0.1 on the host, and the only public entrance is the Cloudflare tunnel
 # (which dials OUT — no inbound firewall hole). Docker's iptables rules bypass
 # UFW, so publishing to 0.0.0.0 here would expose the app regardless of `ufw
@@ -32,9 +36,15 @@ services:
     environment:
       PASEO_PASSWORD: ${PASEO_PASSWORD:?PASEO_PASSWORD is required - copy .env.example to .env}
       PASEO_HOSTNAMES: ${PASEO_HOSTNAMES:-}
-      # 9router: reached by service name on the internal network.
-      NINEROUTER_URL: ${NINEROUTER_URL:-}
-      NINEROUTER_KEY: ${NINEROUTER_KEY:-}
+      # AI Router plugin (e.g. OmniRoute). Passed through unchanged; the plugin
+      # defines what each means. Blank = unset, nothing else changes.
+      # Satellites inherit these through the `paseo-common` anchor.
+      AI_ROUTER_URL: ${AI_ROUTER_URL:-}
+      AI_ROUTER_KEY: ${AI_ROUTER_KEY:-}
+      AI_ROUTER_TOKEN: ${AI_ROUTER_TOKEN:-}
+      AI_ROUTER_CONSOLE_URL: ${AI_ROUTER_CONSOLE_URL:-}
+      # Set = the plugin registrar installs the AI Router plugin on boot.
+      AI_ROUTER_PLUGIN_SOURCE: ${AI_ROUTER_PLUGIN_SOURCE:-}
       # Agent CLI credentials (optional; blank = interactive login instead)
       GH_TOKEN: ${GH_TOKEN:-}
       SUPABASE_ACCESS_TOKEN: ${SUPABASE_ACCESS_TOKEN:-}
@@ -77,57 +87,15 @@ services:
     memswap_limit: ${PASEO_MEMSWAP_LIMIT:-0}
     security_opt:
       - seccomp:unconfined   # lets headless Chromium sandbox properly
-    depends_on:
-      # Wait for the router to actually answer, not just to exist. The nine
-      # satellite services inherit this via the `paseo-common` anchor.
-      9router:
-        condition: service_healthy
-    networks: [pds]
-
-  9router:
-    image: decolua/9router:latest
-    container_name: paseo-dev-stack-9router
-    restart: unless-stopped
-    ports:
-      - "127.0.0.1:${NINEROUTER_PORT:-20128}:20128"
-    environment:
-      DATA_DIR: /app/data
-      PORT: "20128"
-      # Must be 0.0.0.0, not 127.0.0.1, or sibling containers cannot reach it.
-      HOSTNAME: 0.0.0.0
-      # 9router REFUSES remote logins while the password is still the shipped
-      # default (123456) — it answers 403 "Default password must be changed
-      # before remote access". Inside Docker every login is remote, so without
-      # this you cannot reach the dashboard or its API at all.
-      # Only applied on first boot; once a password is stored this is ignored.
-      INITIAL_PASSWORD: ${NINEROUTER_PASSWORD:-}
-    volumes:
-      - ninerouter-data:/app/data
-    # The image ships no healthcheck, so `depends_on` gated only on
-    # container-created: paseo could start 42ms after the router container and
-    # get connection-refused on its first model call. wget is present in this
-    # image; curl is NOT.
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:20128/api/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      # Generous: on a memory-pressured host a short budget turns a degraded
-      # start into a refused one, because paseo's depends_on is a hard gate.
-      start_period: 60s
     networks: [pds]
 
   # ── Satellite Paseo daemons ────────────────────────────────────────────────
-  # Extra, independent daemons that share the SAME 9router pool. Each has its
-  # own state volume, its own workspace, and its own pairing identity, so it
-  # runs its own agents — but every one of them routes models through the one
-  # 9router, so subscriptions/quotas are pooled rather than duplicated.
+  # Extra, independent daemons. Each has its own state volume, its own
+  # workspace, and its own pairing identity, so it runs its own agents. They
+  # inherit the main daemon's environment, including the AI Router plugin
+  # settings, so every daemon can route through the same router server.
   #
   #   docker compose --profile satellites up -d
-  #
-  # They reach the router by SERVICE NAME (http://9router:20128), which does not
-  # change with the public hostname. 9router itself is stock upstream — nothing
-  # here modifies it.
   #
   # These merge the `paseo-common` anchor (`<<:`) rather than using `extends`.
   # `extends` APPENDS to the parent's list fields instead of replacing them, so
@@ -320,7 +288,6 @@ volumes:
   paseo-home-7:
   paseo-home-8:
   paseo-home-9:
-  ninerouter-data:
 
 networks:
   pds:

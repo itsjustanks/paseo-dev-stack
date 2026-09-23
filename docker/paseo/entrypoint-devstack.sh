@@ -68,16 +68,6 @@ fi
 <!-- Auto-memory index. One line per memory: - [Title](file.md) — hook -->
 MEMEOF
 
-# ── 9router wiring ──────────────────────────────────────────────────────────
-# Point the agent CLIs at 9router when it is configured. We only export what
-# is actually set, so an unconfigured stack falls back to normal OAuth login.
-if [ -n "${NINEROUTER_URL:-}" ] && [ -n "${NINEROUTER_KEY:-}" ]; then
-  log "9router: $NINEROUTER_URL"
-  export ANTHROPIC_BASE_URL="$NINEROUTER_URL"
-  export ANTHROPIC_AUTH_TOKEN="$NINEROUTER_KEY"
-  unset ANTHROPIC_API_KEY || true
-fi
-
 # ── agent-browser ───────────────────────────────────────────────────────────
 # Chrome for Testing was downloaded at build time into $AGENT_HOME. agent-browser
 # looks under $HOME/.agent-browser/browsers and ignores XDG_CACHE_HOME, and $HOME
@@ -176,8 +166,8 @@ fi
 #
 #   pluginsEnabled — defaults to FALSE (bootstrap.js: `config.pluginsEnabled ??
 #     false`). Without it every plugin registers but sits at STATUS=disabled and
-#     `paseo plugin reload` answers "Plugins are globally disabled". Since this
-#     image ships a plugin, the container turns it on.
+#     `paseo plugin reload` answers "Plugins are globally disabled". Model
+#     routing comes from a plugin (the AI Router), so the container turns it on.
 #
 # Applied only when ABSENT — an explicit choice is never overwritten.
 #
@@ -217,9 +207,12 @@ PY
 # Copying the directory is NOT enough: `paseo plugin ls` stays empty and no
 # provider appears. The daemon only knows about a plugin after `paseo plugin
 # add`, which records it in config.json. Note the id comes from the plugin's
-# own paseo-plugin.json (here: agent-link-9router) — you cannot pass --id
-# "9router", because ids must match /^[a-z][a-z0-9-]*$/ and cannot start with
-# a digit.
+# own paseo-plugin.json — ids must match /^[a-z][a-z0-9-]*$/.
+#
+# The image vendors no plugins today, so this loop finds nothing unless you
+# add one under /opt/paseo-plugins (see the Dockerfile). The AI Router plugin
+# comes in separately: set AI_ROUTER_PLUGIN_SOURCE in .env and the registrar
+# below installs it into this daemon (see register-plugins.sh).
 PLUGIN_SRC="${PASEO_PLUGIN_SOURCE:-/opt/paseo-plugins}"
 PLUGIN_DEST="$HOME_DIR/.paseo/plugins"
 if [ -d "$PLUGIN_SRC" ]; then
@@ -249,11 +242,37 @@ fi
 # Register queued plugins once the daemon is up. Backgrounded because
 # `paseo plugin add` needs the daemon that the exec below starts.
 if [ -x /usr/local/bin/register-plugins.sh ] \
-   && [ -s "$HOME_DIR/.paseo/.pending-plugins" ]; then
+   && { [ -s "$HOME_DIR/.paseo/.pending-plugins" ] \
+        || [ -n "${AI_ROUTER_PLUGIN_SOURCE:-}" ]; }; then
   run_as_paseo env HOME="$HOME_DIR" PASEO_LISTEN="${PASEO_LISTEN:-0.0.0.0:6767}" \
     nohup /usr/local/bin/register-plugins.sh \
       >> "$HOME_DIR/.paseo/plugin-register.log" 2>&1 &
   log "plugin registrar started (waits for the daemon)"
+fi
+
+# ── Paseo server ────────────────────────────────────────────────────────────
+# The base entrypoint starts the daemon from the path in /etc/paseo-server-entry
+# (the image's copy under /usr/local), not from PATH. A server updated into
+# /opt/npm-global (make update-clis) survives recreates where /usr/local does
+# not, but would never run. Point the entry at it when it is the NEWER copy and
+# parses; an older one left behind after an image upgrade must not downgrade
+# the daemon. Redone every boot from the image's original, saved once.
+SERVER_ENTRY=/etc/paseo-server-entry
+NPM_SERVER=/opt/npm-global/lib/node_modules/@getpaseo/server
+pkg_version() { node -p 'require(process.argv[1] + "/package.json").version' "$1" 2>/dev/null || true; }
+if [ "$(id -u)" = "0" ] && [ -f "$SERVER_ENTRY" ]; then
+  [ -f "$SERVER_ENTRY.image" ] || cp "$SERVER_ENTRY" "$SERVER_ENTRY.image"
+  entry="$(cat "$SERVER_ENTRY.image")"
+  cand="$NPM_SERVER/dist/scripts/supervisor-entrypoint.js"
+  if [ -f "$cand" ] && node --check "$cand" 2>/dev/null; then
+    v_img="$(pkg_version "${entry%/dist/*}")"; v_npm="$(pkg_version "$NPM_SERVER")"
+    if [ -n "$v_npm" ] \
+       && [ "$(printf '%s\n%s\n' "$v_img" "$v_npm" | sort -V | tail -1)" = "$v_npm" ]; then
+      entry="$cand"
+    fi
+  fi
+  printf '%s\n' "$entry" > "$SERVER_ENTRY"
+  log "paseo server: $entry"
 fi
 
 log "handing off to paseo entrypoint"
