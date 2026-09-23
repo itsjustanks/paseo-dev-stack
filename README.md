@@ -105,12 +105,11 @@ The installer detects the OS and skips privileged host setup on a Mac.
 | Component | What it is |
 |---|---|
 | **Paseo** | Agent orchestration UI on `:6767`, running agents as the non-root `paseo` user |
-| **9router** | Model routing / multi-account failover on `:20128` |
 | **Cloudflare Tunnel** | Public HTTPS with **no inbound firewall hole** — named or throwaway |
 | **agent-browser** | Headless Chromium for agents, Chrome baked into the image |
 | **Auto-memory** | Claude Code's persistent memory, seeded from `./memory/` and kept on a volume |
 | **VS Code dev tunnels** | `code tunnel` → edit the box from vscode.dev in a browser |
-| **9router Paseo plugin** | Accounts, quotas and models in the Paseo sidebar |
+| **AI Router plugin** | Not bundled — bring your own (e.g. OmniRoute); the stack passes its settings to every daemon |
 | **Agent CLIs** | Claude Code · Codex · Kimi Code · Cursor Agent |
 | **Cloud CLIs** | doctl · cloudflared · wrangler · vercel · netlify · flyctl · supabase · gh |
 | **Dev tools** | git · Node 22 · Python 3 + uv · ripgrep · jq · build-essential |
@@ -131,7 +130,6 @@ docker/paseo/
   agent-env.sh            shell env for interactive sessions
 config/                   seed config, copied in on first boot only
   claude/settings.json    auto-memory dir, permissions, output style
-  codex/config.toml       9router provider block
 memory/                   auto-memory seeds, version-controlled
 scripts/
   bootstrap-server.sh     host prep: user, docker, swap, firewall
@@ -164,7 +162,7 @@ image installs them with `HOME=/opt/agent-home` and symlinks binaries into
 `/usr/local/bin`, so the volume carries only credentials, config, and memory —
 exactly what should persist. `make doctor` asserts this hasn't regressed.
 
-**Nothing is published publicly.** Both ports bind to `127.0.0.1`; the only way
+**Nothing is published publicly.** Every port binds to `127.0.0.1`; the only way
 in is the Cloudflare tunnel, which dials outward. This matters because Docker's
 iptables rules **bypass UFW** — a `ufw deny` would not protect a port published
 to `0.0.0.0`. The 127.0.0.1 binds are the actual protection.
@@ -177,22 +175,8 @@ Everything lives in `.env` (gitignored). The essentials:
 |---|---|
 | `PASEO_PASSWORD` | **Required.** Web UI / API / websocket auth. |
 | `PASEO_HOSTNAMES` | **Required for tunnels.** Your public hostname, or Paseo rejects the connection. |
-| `NINEROUTER_KEY` | Mint in the dashboard after first boot, then `make restart`. |
+| `AI_ROUTER_*` | Optional. Settings for your AI Router plugin, passed to every daemon. See [AI Router plugin](#ai-router-plugin). |
 | `TUNNEL_TOKEN` | From Cloudflare Zero Trust → Networks → Tunnels. Blank = use `make quick-tunnel`. |
-
-### Wiring up 9router
-
-Chicken-and-egg: the key only exists after the dashboard is running.
-
-```bash
-make up
-make router                       # prints the dashboard URL (default pw: 123456 — change it)
-# create a key, then put it in .env as NINEROUTER_KEY
-make restart
-```
-
-Agents then reach it at `http://9router:20128` — the internal service name,
-which does not change when the public hostname does.
 
 ### Exposing it publicly
 
@@ -315,13 +299,37 @@ make code-tunnel-url    # print the URL again
 The tunnel is Microsoft's own; the container dials out to it. Your code at
 `/workspace` and every agent CLI are available in that browser IDE.
 
-### 9router Paseo plugin
+### AI Router plugin
 
-The image vendors [paseo-plugin-9router](https://github.com/itsjustanks/paseo-plugin-9router)
-and the entrypoint registers it on first boot (into `~/.paseo`, which is on the
-volume — so it cannot be done at build time). It adds a **9Router** sidebar
-panel: setup checklist, per-account quota bars, parked-account recovery, and the
-model list. Pin a version with `--build-arg PLUGIN_9ROUTER_REF=v1.2.3`.
+The stack runs Paseo daemons only. Model routing is a Paseo plugin — an **AI
+Router** plugin such as OmniRoute — pointed at a router server that holds the
+AI logins. Nothing is bundled; install your plugin into each daemon:
+
+```bash
+make shell                               # main daemon, as paseo
+paseo plugin install <source>            # e.g. github:owner/repo
+paseo plugin ls                          # wait for it to reach `running`
+```
+
+A satellite is `docker exec -it --user paseo pds-paseo-N bash -l`. Plugins are
+recorded in `~/.paseo`, which is on each daemon's own volume, so they survive
+restarts, rebuilds and updates — and each daemon needs its own install.
+
+Its settings go in `.env` and reach the main daemon and every satellite:
+
+```bash
+AI_ROUTER_URL=
+AI_ROUTER_KEY=
+AI_ROUTER_TOKEN=
+AI_ROUTER_CONSOLE_URL=
+```
+
+Apply a change with `docker compose up -d --no-build` (add `--profile
+satellites` if you run them). `make restart` keeps the old environment.
+
+To bake a plugin into the image instead, clone it under `/opt/paseo-plugins/`
+in the Dockerfile (see the "Paseo plugins" note there); the entrypoint
+registers everything in that directory on boot.
 
 ## The control panel
 
@@ -384,42 +392,48 @@ installer, add a `RUN` line to the Dockerfile following the existing pattern —
 install with `HOME=$AGENT_HOME`, then symlink into `/usr/local/bin`, so the
 `/home/paseo` volume cannot mask it.
 
-## Model routing with 9router
+## Moving off the bundled 9router
 
-9router holds several subscriptions, tracks each one's quota, and falls back
-when one runs out. It is the **stock upstream image** — this repo only sets its
-documented environment variables.
+Earlier versions ran a local 9router container and vendored its Paseo plugin.
+Both are gone. Updating deletes nothing: the old container keeps running
+(compose now reports it as an orphan) and its data volume stays. To finish the
+move on an existing install:
 
-```bash
-make router-status    # what is routed
-make router-key       # mint an API key into .env
-make router-on        # route claude + codex through it
-make router-off       # back to each CLI's own login
-```
+1. **Remove the router container — the container only.** Before you update
+   (`make update-apply` pulls and restarts in one go), while compose still
+   knows the service:
 
-These call **9router's own API**, which owns CLI wiring: it writes
-`~/.claude/settings.json` and `~/.codex/config.toml` and can cleanly undo both.
-Hand-editing those files would fight it, so this repo never does.
+   ```bash
+   docker compose stop 9router && docker compose rm -f 9router
+   ```
 
-Kimi and Cursor speak vendor-specific protocols with no base-URL override, so
-they always use their own logins. **Paseo's own preloaded providers are never
-modified** — the bundled plugin adds a separate `9Router` provider alongside
-them.
+   Already updated? Compose no longer knows the name, so use the container:
+   `docker rm -f paseo-dev-stack-9router`.
 
-> 9router refuses remote logins while its password is the shipped default, and
-> in Docker every login is remote. Compose passes `NINEROUTER_PASSWORD` as
-> `INITIAL_PASSWORD` on first boot so the dashboard is reachable at all.
->
-> `INITIAL_PASSWORD` only seeds an **empty** `ninerouter-data` volume. If you
-> restore or migrate an existing 9router data directory, the password stored in
-> it wins and `NINEROUTER_PASSWORD` is ignored — the four targets above then
-> fail to authenticate until you set it to the password that volume already
-> has. `make router` and `make router-tunnel` never log in, so they keep
-> working; `router-tunnel` prints this value as a display hint either way.
+2. **Undo `make router-on` if you used it.** 9router wrote its routing into
+   `~/.claude/settings.json` (the `ANTHROPIC_*` entries under `env`) and
+   `~/.codex/config.toml` (`model_provider = "9router"` and its
+   `[model_providers.9router]` block). Those live on the daemon's volume and
+   outlive the router. Run `make router-off` before updating, or delete them
+   by hand afterwards (`make shell`).
+
+3. **Remove the old plugin** from each daemon (it shows offline otherwise):
+   `paseo plugin remove agent-link-9router`. Its own config,
+   `~/.agent-link/9router.json`, is left on the volume; delete it if you like.
+
+4. **`.env`:** the `NINEROUTER_*` keys are now ignored; delete them when
+   convenient. The entrypoint no longer exports `ANTHROPIC_BASE_URL` from them,
+   so until an AI Router plugin is set up each CLI uses its own login.
+   `make update-apply` adds the new `AI_ROUTER_*` keys, blank.
+
+5. **The data volume stays** (`paseo-dev-stack_ninerouter-data`, holding the
+   router's accounts and keys). Nothing in this repo removes it, not even
+   `make nuke`. Once you are sure you no longer need it, remove it by hand:
+   `docker volume rm paseo-dev-stack_ninerouter-data`.
 
 ## Multiple daemons
 
-Run extra Paseo daemons that share the same 9router pool:
+Run extra, isolated Paseo daemons on the same host:
 
 ```bash
 make satellites          # starts paseo-2 (:6768) and paseo-3 (:6769)
@@ -428,8 +442,10 @@ make satellites-down
 
 Each satellite is **fully isolated**: its own state volume (agents,
 credentials, history), its own workspace directory, its own port and pairing
-identity. Nothing is shared except the read-only config/memory seeds and the
-router itself — so subscriptions are pooled while projects stay separate.
+identity. Nothing is shared except the read-only config/memory seeds, the
+global-packages directory and the `AI_ROUTER_*` settings — so every daemon can
+route through the same router server while projects stay separate. Install the
+AI Router plugin in each daemon; its registration lives on that daemon's volume.
 
 Seeded config is written **only on first boot and only when absent**, so a
 daemon with its own Claude settings keeps them. `DEVSTACK_NO_SEED=1` skips
@@ -508,7 +524,8 @@ The guard is deliberately conservative:
 - It **never** touches Paseo, 9router, an agent CLI, or a VS Code tunnel —
   matched on the **parent chain**, not just the process's own command line.
   (9router's dashboard is itself a Next app, so a naive matcher reaps the live
-  model router every 60s and every routed agent loses its connection.)
+  model router every 60s and every routed agent loses its connection. The
+  stack no longer ships 9router; the rule stays for hosts that still run one.)
 - The 12GB cap is not arbitrary: a first compile legitimately uses 6-11GB, so
   a 6GB cap kills it mid-compile and surfaces as "next-server keeps crashing".
   Age is what actually catches leaks — a leak stays big, a compile only spikes.

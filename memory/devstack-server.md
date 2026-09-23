@@ -5,17 +5,19 @@ metadata:
   type: reference
 ---
 
-This machine runs the **devstack** compose stack: Paseo (agent orchestration),
-9router (model routing), and optionally a Cloudflare tunnel.
+This machine runs the **devstack** compose stack: Paseo daemons (agent
+orchestration) and optionally a Cloudflare tunnel. Model routing is not part of
+the stack; an AI Router Paseo plugin points agents at a router server.
 
 - Everything runs as the non-root `paseo` user (uid 1000). Agents refuse
   elevated permission modes as root.
 - Containers reach each other by **service name** on the `devstack` bridge
-  network: `http://9router:20128`, `http://paseo:6767`. These do not change
-  when the public hostname changes.
-- Both ports bind to `127.0.0.1` on the host. The only public entrance is the
-  Cloudflare tunnel, which dials outward. Docker's iptables rules bypass UFW,
-  so publishing to `0.0.0.0` would expose the app regardless of firewall rules.
+  network, e.g. `http://paseo:6767`. These do not change when the public
+  hostname changes.
+- Every published port binds to `127.0.0.1` on the host. The only public
+  entrance is the Cloudflare tunnel, which dials outward. Docker's iptables
+  rules bypass UFW, so publishing to `0.0.0.0` would expose the app regardless
+  of firewall rules.
 
 **Traps:**
 - `/home/paseo` is a Docker volume. Agent CLIs installed into `$HOME` at build
