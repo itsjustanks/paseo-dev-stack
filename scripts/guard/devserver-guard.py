@@ -74,6 +74,16 @@ SUPERVISOR_RE = re.compile(
 NEVER_KILL_RE = re.compile(
     r"Paseo|paseo|9router|/(claude|codex|kimi)\b|cursor-agent|devin|code tunnel|vscode"
 )
+# ...but that name match never fires for a SERVICE running in its own
+# container. A containerised router (9router, OmniRoute) is a Next app too,
+# and its parent chain on the host ends in containerd-shim, not in anything
+# named. Its next-server passed the 2h age rule and was reaped every 2h -- 79
+# restarts on one host. So containers are judged by who else lives in them:
+# the dev servers this guard exists for run inside a Paseo daemon container,
+# next to the daemon (@getpaseo/server). A next-server in any OTHER container
+# belongs to some service and is left alone. Host processes are unaffected.
+CONTAINER_ID_RE = re.compile(r"\b([0-9a-f]{64})\b")
+PASEO_DAEMON_RE = re.compile(r"@getpaseo/server")
 
 
 def log(msg):
@@ -163,6 +173,52 @@ def processes():
     return procs
 
 
+def container_of(cgroup_text):
+    """Container id from /proc/<pid>/cgroup, or "" for a host process.
+
+    Docker puts the 64-hex id in the path on cgroup v1 and v2, with either
+    driver (…/docker-<id>.scope, /docker/<id>); podman and containerd do too.
+    Inside a container with a private cgroup namespace the path is just "/",
+    which reads as "host" -- correct, since everything visible is then in one
+    container.
+    """
+    m = CONTAINER_ID_RE.search(cgroup_text)
+    return m.group(1) if m else ""
+
+
+def read_container(pid):
+    """container_of() for a live pid; None if unreadable (it exited, or /proc
+    is locked down). Callers MUST treat None as "do not touch"."""
+    try:
+        with open(f"/proc/{pid}/cgroup") as f:
+            return container_of(f.read())
+    except Exception:
+        return None
+
+
+def reapable_servers(procs, cid_of):
+    """next-servers this guard may act on.
+
+    Skips protected ones, and any in a container that is not a Paseo daemon's.
+    cid_of(pid) -> container id, "" for the host, None when unknown.
+    """
+    by_pid = {p["pid"]: p for p in procs}
+    daemon_cids = {c for c in (cid_of(p["pid"]) for p in procs
+                               if PASEO_DAEMON_RE.search(p["cmd"])) if c}
+    out = []
+    for p in procs:
+        if not SERVER_RE.search(p["cmd"]) or protected(p, by_pid):
+            continue
+        cid = cid_of(p["pid"])
+        if cid is None or (cid and cid not in daemon_cids):
+            if DRY_RUN:
+                where = f"container {cid[:12]}" if cid else "unknown cgroup"
+                log(f"DRY-RUN skip [{p['pid']}] {where}: not a Paseo daemon's dev server")
+            continue
+        out.append(p)
+    return out
+
+
 def protected(proc, by_pid):
     """True if this process, or anything in its parent chain, is protected."""
     if NEVER_KILL_RE.search(proc["cmd"]):
@@ -219,7 +275,7 @@ def main():
         return 0
 
     by_pid = {p["pid"]: p for p in procs}
-    servers = [p for p in procs if SERVER_RE.search(p["cmd"]) and not protected(p, by_pid)]
+    servers = reapable_servers(procs, read_container)
     if not servers:
         return 0
 
