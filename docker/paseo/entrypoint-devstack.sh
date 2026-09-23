@@ -68,16 +68,6 @@ fi
 <!-- Auto-memory index. One line per memory: - [Title](file.md) — hook -->
 MEMEOF
 
-# ── 9router wiring ──────────────────────────────────────────────────────────
-# Point the agent CLIs at 9router when it is configured. We only export what
-# is actually set, so an unconfigured stack falls back to normal OAuth login.
-if [ -n "${NINEROUTER_URL:-}" ] && [ -n "${NINEROUTER_KEY:-}" ]; then
-  log "9router: $NINEROUTER_URL"
-  export ANTHROPIC_BASE_URL="$NINEROUTER_URL"
-  export ANTHROPIC_AUTH_TOKEN="$NINEROUTER_KEY"
-  unset ANTHROPIC_API_KEY || true
-fi
-
 # ── agent-browser ───────────────────────────────────────────────────────────
 # Chrome for Testing was downloaded at build time into $AGENT_HOME. agent-browser
 # looks under $HOME/.agent-browser/browsers and ignores XDG_CACHE_HOME, and $HOME
@@ -176,8 +166,8 @@ fi
 #
 #   pluginsEnabled — defaults to FALSE (bootstrap.js: `config.pluginsEnabled ??
 #     false`). Without it every plugin registers but sits at STATUS=disabled and
-#     `paseo plugin reload` answers "Plugins are globally disabled". Since this
-#     image ships a plugin, the container turns it on.
+#     `paseo plugin reload` answers "Plugins are globally disabled". Model
+#     routing comes from a plugin (the AI Router), so the container turns it on.
 #
 # Applied only when ABSENT — an explicit choice is never overwritten.
 #
@@ -217,9 +207,10 @@ PY
 # Copying the directory is NOT enough: `paseo plugin ls` stays empty and no
 # provider appears. The daemon only knows about a plugin after `paseo plugin
 # add`, which records it in config.json. Note the id comes from the plugin's
-# own paseo-plugin.json (here: agent-link-9router) — you cannot pass --id
-# "9router", because ids must match /^[a-z][a-z0-9-]*$/ and cannot start with
-# a digit.
+# own paseo-plugin.json — ids must match /^[a-z][a-z0-9-]*$/.
+#
+# The image vendors no plugins today, so this loop finds nothing unless you
+# add one under /opt/paseo-plugins (see the Dockerfile).
 PLUGIN_SRC="${PASEO_PLUGIN_SOURCE:-/opt/paseo-plugins}"
 PLUGIN_DEST="$HOME_DIR/.paseo/plugins"
 if [ -d "$PLUGIN_SRC" ]; then

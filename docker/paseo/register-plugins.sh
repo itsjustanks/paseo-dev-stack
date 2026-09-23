@@ -29,7 +29,7 @@ registered="$(paseo plugin ls 2>/dev/null | awk 'NR>1{print $1}')"
 while IFS=$'\t' read -r dir sub; do
   [ -n "$dir" ] && [ -d "$dir" ] || continue
   # The id is declared by the plugin itself; ids must match /^[a-z][a-z0-9-]*$/
-  # so they cannot start with a digit (a plain "9router" is rejected).
+  # so they cannot start with a digit.
   id="$(sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
         "$dir/$sub/paseo-plugin.json" 2>/dev/null | head -1)"
   if [ -n "$id" ] && printf '%s\n' "$registered" | grep -qx "$id"; then
