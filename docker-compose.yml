@@ -252,6 +252,57 @@ services:
     mem_limit: ${PASEO_MEM_LIMIT_9:-0}
     memswap_limit: ${PASEO_MEMSWAP_LIMIT_9:-0}
 
+  paseo-10:
+    <<: *paseo-common
+    profiles: [satellites]
+    container_name: pds-paseo-10
+    hostname: ${PASEO_NAME_10:-paseo-10}
+    ports:
+      - "127.0.0.1:${PASEO_PORT_10:-6776}:6767"
+      - "127.0.0.1:${AGENT_BROWSER_STREAM_PORT_10:-9233}:${AGENT_BROWSER_STREAM_BRIDGE_PORT:-9224}"
+    volumes:
+      - paseo-home-10:/home/paseo
+      - ${GLOBAL_PACKAGES_DIR:-./global-packages}:/opt/npm-global
+      - ${WORKSPACE_DIR_10:-./workspace-10}:/workspace
+      - ./config:/opt/devstack-seed:ro
+      - ./memory:/opt/devstack-seed-memory:ro
+    mem_limit: ${PASEO_MEM_LIMIT_10:-0}
+    memswap_limit: ${PASEO_MEMSWAP_LIMIT_10:-0}
+
+  paseo-11:
+    <<: *paseo-common
+    profiles: [satellites]
+    container_name: pds-paseo-11
+    hostname: ${PASEO_NAME_11:-paseo-11}
+    ports:
+      - "127.0.0.1:${PASEO_PORT_11:-6777}:6767"
+      - "127.0.0.1:${AGENT_BROWSER_STREAM_PORT_11:-9234}:${AGENT_BROWSER_STREAM_BRIDGE_PORT:-9224}"
+    volumes:
+      - paseo-home-11:/home/paseo
+      - ${GLOBAL_PACKAGES_DIR:-./global-packages}:/opt/npm-global
+      - ${WORKSPACE_DIR_11:-./workspace-11}:/workspace
+      - ./config:/opt/devstack-seed:ro
+      - ./memory:/opt/devstack-seed-memory:ro
+    mem_limit: ${PASEO_MEM_LIMIT_11:-0}
+    memswap_limit: ${PASEO_MEMSWAP_LIMIT_11:-0}
+
+  paseo-12:
+    <<: *paseo-common
+    profiles: [satellites]
+    container_name: pds-paseo-12
+    hostname: ${PASEO_NAME_12:-paseo-12}
+    ports:
+      - "127.0.0.1:${PASEO_PORT_12:-6778}:6767"
+      - "127.0.0.1:${AGENT_BROWSER_STREAM_PORT_12:-9235}:${AGENT_BROWSER_STREAM_BRIDGE_PORT:-9224}"
+    volumes:
+      - paseo-home-12:/home/paseo
+      - ${GLOBAL_PACKAGES_DIR:-./global-packages}:/opt/npm-global
+      - ${WORKSPACE_DIR_12:-./workspace-12}:/workspace
+      - ./config:/opt/devstack-seed:ro
+      - ./memory:/opt/devstack-seed-memory:ro
+    mem_limit: ${PASEO_MEM_LIMIT_12:-0}
+    memswap_limit: ${PASEO_MEMSWAP_LIMIT_12:-0}
+
   # Cloudflare tunnel — remotely-managed (token) mode.
   # Enabled only when TUNNEL_TOKEN is set:  docker compose --profile tunnel up -d
   cloudflared:
@@ -288,6 +339,9 @@ volumes:
   paseo-home-7:
   paseo-home-8:
   paseo-home-9:
+  paseo-home-10:
+  paseo-home-11:
+  paseo-home-12:
 
 networks:
   pds:

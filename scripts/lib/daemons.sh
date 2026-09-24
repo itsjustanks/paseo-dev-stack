@@ -5,7 +5,7 @@
 # Sourceable:  . scripts/lib/daemons.sh   →  running_daemons
 #
 # Prints one compose service per line: `paseo` first, then any running
-# satellite (paseo-2 … paseo-9). Tunnels and anything else are left out.
+# satellite (paseo-2 … paseo-12). Tunnels and anything else are left out.
 # --profile satellites is what makes compose list the satellites at all; it
 # starts nothing here, `ps` only reads.
 #
