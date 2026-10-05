@@ -165,9 +165,15 @@ if [ -f "$BRC" ] && ! grep -q '# devstack-prompt' "$BRC" 2>/dev/null; then
 # non-login interactive shells read), not .profile (which they do not).
 force_color_prompt=yes
 PS1='\[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '
-export PATH="/usr/local/bin:${PNPM_HOME:-/usr/local/share/pnpm}/bin:${BUN_INSTALL:-/usr/local/share/bun}/bin:$HOME/.local/bin:$PATH"
+export PATH="/opt/npm-global/bin:/usr/local/bin:${PNPM_HOME:-/usr/local/share/pnpm}/bin:${BUN_INSTALL:-/usr/local/share/bun}/bin:$HOME/.local/bin:$PATH"
 BASHRC
   log "configured shell prompt"
+fi
+# Older .bashrc files put /usr/local/bin first, so terminals ran the image's stale
+# paseo/claude/codex instead of the updated copies in /opt/npm-global/bin.
+if [ -f "$BRC" ] && grep -q '^export PATH="/usr/local/bin:${PNPM_HOME' "$BRC" 2>/dev/null; then
+  run_as_paseo sed -i 's#^export PATH="/usr/local/bin:${PNPM_HOME#export PATH="/opt/npm-global/bin:/usr/local/bin:${PNPM_HOME#' "$BRC"
+  log "put /opt/npm-global/bin first in .bashrc"
 fi
 
 # ── Daemon defaults ─────────────────────────────────────────────────────────
