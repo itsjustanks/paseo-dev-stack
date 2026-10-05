@@ -291,9 +291,16 @@ COPY docker/paseo/stream-bridge.py       /usr/local/bin/stream-bridge.py
 COPY docker/paseo/register-plugins.sh    /usr/local/bin/register-plugins.sh
 COPY docker/paseo/entrypoint-devstack.sh /usr/local/bin/entrypoint-devstack.sh
 COPY docker/paseo/agent-env.sh           /etc/profile.d/10-devstack-agents.sh
+# Claude Code managed settings: keep MCP tool search on for agents routed through a gateway
+# (AI Router/OmniRoute). Routed sessions run with CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1,
+# which turns tool search off and ignores a user-level ENABLE_TOOL_SEARCH; only a managed
+# ENABLE_TOOL_SEARCH=force re-enables it (tool-search beta, defer_loading, tool_reference only;
+# every other beta stays off). Verified 2026-09-25 on Claude Code 2.1.280 through OmniRoute:
+# 70 -> 13 tools sent upfront, -44% input tokens, deferred Paseo MCP tools still found and called.
+COPY docker/paseo/claude-managed-settings.json /etc/claude-code/managed-settings.json
 RUN chmod +x /usr/local/bin/entrypoint-devstack.sh /usr/local/bin/stream-bridge.py \
     /usr/local/bin/register-plugins.sh \
-    && chmod 0644 /etc/profile.d/10-devstack-agents.sh
+    && chmod 0644 /etc/profile.d/10-devstack-agents.sh /etc/claude-code/managed-settings.json
 
 # PNPM_HOME/bin must be on PATH or `pnpm add -g` refuses to run
 # ("configured global bin directory is not in PATH").
