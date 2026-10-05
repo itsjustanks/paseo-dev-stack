@@ -17,4 +17,6 @@ fi
 # pnpm refuses `add -g` unless its bin dir is on PATH; bun's too.
 export PNPM_HOME="${PNPM_HOME:-/usr/local/share/pnpm}"
 export BUN_INSTALL="${BUN_INSTALL:-/usr/local/share/bun}"
-export PATH="/usr/local/bin:$PNPM_HOME/bin:$BUN_INSTALL/bin:$HOME/.local/bin:$PATH"
+# /opt/npm-global/bin first, as in the image ENV: runtime updates of Paseo, Claude Code and Codex
+# live there, and the image's own older copies sit in /usr/local/bin.
+export PATH="/opt/npm-global/bin:/usr/local/bin:$PNPM_HOME/bin:$BUN_INSTALL/bin:$HOME/.local/bin:$PATH"
