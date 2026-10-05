@@ -44,7 +44,7 @@ fi
 printf '%s' "$PORT" | grep -qE '^[0-9]{2,5}$' || die "invalid port '$PORT'"
 
 SLOT=""
-for n in 2 3 4 5 6 7 8 9; do
+for n in 2 3 4 5 6 7 8 9 10 11 12; do
   # A slot is TAKEN only when it is named -- autotune --daemons N pre-writes
   # PASEO_MEM_LIMIT_n as a RESERVATION for a daemon that does not exist yet,
   # and skipping those would send us to an unreserved slot whose budget check
@@ -111,7 +111,7 @@ if [ "$TOTAL_MB" -gt 0 ]; then
   RESERVED_FOR_US_MB=0
   for key in PASEO_MEM_LIMIT PASEO_MEM_LIMIT_2 PASEO_MEM_LIMIT_3 PASEO_MEM_LIMIT_4 \
              PASEO_MEM_LIMIT_5 PASEO_MEM_LIMIT_6 PASEO_MEM_LIMIT_7 PASEO_MEM_LIMIT_8 \
-             PASEO_MEM_LIMIT_9; do
+             PASEO_MEM_LIMIT_9 PASEO_MEM_LIMIT_10 PASEO_MEM_LIMIT_11 PASEO_MEM_LIMIT_12; do
     val="$(grep -E "^${key}=" .env 2>/dev/null | tail -1 | cut -d= -f2- || true)"
     if [ "$key" = "PASEO_MEM_LIMIT_${SLOT}" ]; then
       RESERVED_FOR_US_MB="$(mem_mb "$val")"

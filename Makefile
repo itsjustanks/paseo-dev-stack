@@ -166,9 +166,10 @@ satellites: ## Start the extra Paseo daemons defined in .env
 
 satellites-down: ## Stop the satellite daemons (their volumes are kept)
 	@# Every slot, not just 2 and 3 -- naming a subset silently left tenants
-	@# 4-9 running while reporting the satellites stopped.
+	@# 4-12 running while reporting the satellites stopped.
 	$(DC) --profile satellites stop \
-	  paseo-2 paseo-3 paseo-4 paseo-5 paseo-6 paseo-7 paseo-8 paseo-9
+	  paseo-2 paseo-3 paseo-4 paseo-5 paseo-6 paseo-7 paseo-8 paseo-9 \
+	  paseo-10 paseo-11 paseo-12
 
 # ── Auto-memory ─────────────────────────────────────────────────────────────
 memory-push: ## Copy ./memory/*.md into the container's live memory store
