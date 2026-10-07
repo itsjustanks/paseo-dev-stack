@@ -72,7 +72,7 @@ SUPERVISOR_RE = re.compile(
 # never this guard's business. Match on the PARENT CHAIN too, not just the
 # process's own cmdline — that was the bug the first fix missed.
 NEVER_KILL_RE = re.compile(
-    r"Paseo|paseo|9router|/(claude|codex|kimi)\b|cursor-agent|devin|code tunnel|vscode"
+    r"Paseo|paseo|9router|/(claude|codex)\b|cursor-agent|devin|code tunnel|vscode"
 )
 # ...but that name match never fires for a SERVICE running in its own
 # container. A containerised router (9router, OmniRoute) is a Next app too,

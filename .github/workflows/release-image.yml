@@ -84,7 +84,7 @@ jobs:
           # inherit repo access.
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.description=Paseo dev stack agent image (Paseo + claude/codex/kimi/cursor + agent-browser)
+            org.opencontainers.image.description=Paseo dev stack agent image (Paseo + claude/codex/cursor + agent-browser)
             org.opencontainers.image.licenses=MIT
 
       - name: Build and push by digest

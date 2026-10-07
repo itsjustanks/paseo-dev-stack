@@ -46,7 +46,7 @@ if [ "${1:-}" = "--list" ]; then
   running || { echo "container not running — 'make up' first" >&2; exit 1; }
   echo "── agent CLIs available in the container ──"
   $DC exec -T --user paseo "$SVC" bash -lc '
-    for c in claude codex kimi cursor-agent opencode gemini aider goose amp; do
+    for c in claude codex cursor-agent opencode gemini aider goose amp; do
       if command -v "$c" >/dev/null 2>&1; then
         # Several CLIs print a warning to stderr BEFORE the version (codex
         # emits a PATH-alias warning in a container), so filter those out
