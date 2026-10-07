@@ -119,7 +119,7 @@ jobs:
           docker run --rm -v pds-ci-home:/home/paseo \
             --entrypoint bash paseo-dev-stack/agents:ci -lc '
               set -e
-              for c in claude codex kimi cursor-agent agent-browser supabase gh code uv; do
+              for c in claude codex cursor-agent agent-browser supabase gh code uv; do
                 command -v "$c" >/dev/null || { echo "MISSING: $c"; exit 1; }
                 echo "ok: $c"
               done'

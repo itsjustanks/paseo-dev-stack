@@ -110,7 +110,7 @@ The installer detects the OS and skips privileged host setup on a Mac.
 | **Auto-memory** | Claude Code's persistent memory, seeded from `./memory/` and kept on a volume |
 | **VS Code dev tunnels** | `code tunnel` → edit the box from vscode.dev in a browser |
 | **AI Router plugin** | Not bundled — bring your own (e.g. OmniRoute); the stack passes its settings to every daemon |
-| **Agent CLIs** | Claude Code · Codex · Kimi Code · Cursor Agent |
+| **Agent CLIs** | Claude Code · Codex · Cursor Agent |
 | **Cloud CLIs** | doctl · cloudflared · wrangler · vercel · netlify · flyctl · supabase · gh |
 | **Dev tools** | git · Node 22 · Python 3 + uv · ripgrep · jq · build-essential |
 | **Memory guards** | Reaps runaway Next dev servers and trims the caches that feed them |
@@ -413,12 +413,12 @@ the real program and take it back cleanly when you exit.
 
 ## Agents
 
-Four agent CLIs ship in the image: **Claude Code**, **Codex**, **Kimi Code**,
-and **Cursor Agent**. Log in to each once — credentials live on the volume and
+Three agent CLIs ship in the image: **Claude Code**, **Codex** and
+**Cursor Agent** (Kimi Code was removed in October 2026: it wasn't used). Log in to each once — credentials live on the volume and
 survive restarts and rebuilds:
 
 ```bash
-make auth-all         # or: make auth-claude / auth-codex / auth-kimi / auth-cursor
+make auth-all         # or: make auth-claude / auth-codex / auth-cursor
 ```
 
 ### Adding more

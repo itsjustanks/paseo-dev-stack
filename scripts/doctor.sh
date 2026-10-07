@@ -29,7 +29,7 @@ for s in paseo; do
 done
 
 echo "── agent CLIs ──"
-for t in "claude --version" "codex --version" "kimi --version" \
+for t in "claude --version" "codex --version" \
          "cursor-agent --version" "supabase --version" "gh --version" \
          "agent-browser --version" "node --version" "python3 --version" \
          "uv --version" "git --version" "npm --version" "pnpm --version" \
@@ -51,8 +51,7 @@ echo "── persistence (survives the /home/paseo volume mount) ──"
 # how Claude Code broke — its installer linked into /home/paseo/.local/share,
 # the volume masked the target, and the link still "existed". Require an
 # executable REAL file, and reject any link whose target is inside the volume.
-for p in /usr/local/bin/claude /usr/local/bin/codex /usr/local/bin/cursor-agent \
-         /usr/local/bin/kimi; do
+for p in /usr/local/bin/claude /usr/local/bin/codex /usr/local/bin/cursor-agent; do
   res="$($DC exec -T --user paseo paseo bash -lc '
     p="'"$p"'"
     [ -e "$p" ] || { echo missing; exit; }

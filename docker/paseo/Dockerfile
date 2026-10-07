@@ -7,7 +7,7 @@
 #
 # ── The trap that shapes this file ──────────────────────────────────────────
 # The base image declares VOLUME /home/paseo. Every agent installer (claude,
-# codex, kimi, cursor) writes into $HOME by default, so anything installed
+# codex, cursor) writes into $HOME by default, so anything installed
 # there at BUILD time is masked the moment the volume mounts — the CLIs would
 # silently vanish at runtime.
 #
@@ -187,23 +187,6 @@ RUN HOME="$AGENT_HOME" CODEX_INSTALL_DIR=/usr/local/bin \
       CODEX_HOME="$AGENT_HOME/.codex" \
       bash -c 'curl -fsSL https://chatgpt.com/codex/install.sh | sh' \
     && codex --version
-
-# Kimi Code. The official installer pulls from code.kimi.com, which is
-# unreachable from some datacenters (observed: connect timeout from a DO
-# droplet). Try it, then fall back to the npm package, which ships the same
-# version. NOTE: npm "kimi-cli" is an UNRELATED package — the correct one is
-# @moonshot-ai/kimi-code.
-RUN set -eux; \
-    if KIMI_INSTALL_DIR=/usr/local HOME="$AGENT_HOME" \
-       timeout 120 bash -c 'curl -fsSL --max-time 60 https://code.kimi.com/kimi-code/install.sh | bash' \
-       && [ -x /usr/local/bin/kimi ]; then \
-      echo "kimi: installed from official CDN"; \
-    else \
-      echo "kimi: CDN unreachable, falling back to npm"; \
-      npm install -g @moonshot-ai/kimi-code; \
-    fi; \
-    command -v kimi >/dev/null || { echo "kimi install FAILED"; exit 1; }; \
-    kimi --version || true
 
 # Cursor Agent — hardcodes $HOME/.local/{bin,share}; no env override exists,
 # so redirecting HOME is the only way to keep it off the volume.

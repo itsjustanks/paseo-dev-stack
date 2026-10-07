@@ -4,7 +4,7 @@ DC    := docker compose
 .DEFAULT_GOAL := help
 
 .PHONY: tui help up down restart build rebuild logs ps shell root doctor \
-        auth-claude auth-codex auth-kimi auth-cursor auth-all \
+        auth-claude auth-codex auth-cursor auth-all \
         code-tunnel code-tunnel-bg code-tunnel-url \
         tunnel quick-tunnel tunnel-url memory-push memory-pull \
         guards guards-status guards-dry mem autotune autotune-write \
@@ -80,12 +80,10 @@ auth-claude: ## Log in to Claude Code
 	$(DC) exec -it --user paseo paseo claude
 auth-codex: ## Log in to Codex
 	$(DC) exec -it --user paseo paseo codex login
-auth-kimi: ## Log in to Kimi Code
-	$(DC) exec -it --user paseo paseo kimi
 auth-cursor: ## Log in to Cursor Agent
 	$(DC) exec -it --user paseo paseo cursor-agent login
 auth-all: ## Log in to every agent CLI, one after another
-	@for t in claude codex kimi cursor; do \
+	@for t in claude codex cursor; do \
 	  echo "── $$t ──"; $(MAKE) --no-print-directory auth-$$t || true; done
 
 # ── Tunnels ─────────────────────────────────────────────────────────────────
